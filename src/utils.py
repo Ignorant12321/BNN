@@ -63,6 +63,20 @@ def resolve_device(device_name: str):
     return torch.device(device_name)
 
 
+def describe_device(device, cuda_available: bool | None = None, cuda_name: str | None = None) -> str:
+    """返回训练设备状态，便于确认是否真的使用 GPU。"""
+    if cuda_available is None or (cuda_available and cuda_name is None):
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+        if cuda_available and cuda_name is None:
+            cuda_name = torch.cuda.get_device_name(0)
+    parts = [f"device={device}", f"cuda_available={cuda_available}"]
+    if cuda_name:
+        parts.append(f"gpu={cuda_name}")
+    return ", ".join(parts)
+
+
 def create_run_dir(base_dir: str | Path, model_name: str) -> Path:
     """创建一次实验的输出目录。"""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")

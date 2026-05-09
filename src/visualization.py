@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src.metrics import horizon_metrics, pinaw, picp
+from src.predict import interval_from_mean_std
 
 
 def plot_loss_curve(train_losses: list[float], val_losses: list[float], path: str | Path) -> None:
@@ -96,7 +97,7 @@ def plot_picp_pinaw(y_true: np.ndarray, intervals: dict[str, tuple[np.ndarray, n
     plt.close()
 
 
-def plot_calibration_curve(y_true: np.ndarray, samples: np.ndarray, path: str | Path) -> None:
+def plot_calibration_curve(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, path: str | Path) -> None:
     """绘制概率校准曲线。
 
     横轴是名义覆盖率，纵轴是实际覆盖率。曲线越接近对角线，说明模型给出的
@@ -105,9 +106,7 @@ def plot_calibration_curve(y_true: np.ndarray, samples: np.ndarray, path: str | 
     levels = np.arange(0.1, 1.0, 0.1)
     observed = []
     for level in levels:
-        alpha = 1 - level
-        lower = np.quantile(samples, alpha / 2, axis=0)
-        upper = np.quantile(samples, 1 - alpha / 2, axis=0)
+        lower, upper = interval_from_mean_std(mean, std, level)
         observed.append(picp(y_true, lower, upper))
     plt.figure(figsize=(5, 5))
     plt.plot(levels, observed, marker="o", label="observed")

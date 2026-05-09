@@ -9,16 +9,16 @@ from __future__ import annotations
 import numpy as np
 
 from src.metrics import gaussian_nll_np, mae, nrmse, pinaw, picp, rmse, smape
-from src.predict import interval_from_samples
+from src.predict import interval_from_mean_std
 
 
 def evaluate_predictions(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, samples: np.ndarray) -> dict[str, float]:
     """计算测试集总体指标。
 
-    90% 和 95% 区间来自 MC 样本分位数；NLL 使用 mean 和 std 表示的高斯分布。
+    90% 和 95% 区间来自 mean/std 正态近似，因此同时包含模型输出的 aleatoric 方差。
     """
-    lower90, upper90 = interval_from_samples(samples, 0.90)
-    lower95, upper95 = interval_from_samples(samples, 0.95)
+    lower90, upper90 = interval_from_mean_std(mean, std, 0.90)
+    lower95, upper95 = interval_from_mean_std(mean, std, 0.95)
     return {
         "mae": mae(y_true, mean),
         "rmse": rmse(y_true, mean),

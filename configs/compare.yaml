@@ -7,12 +7,13 @@ data:
   fill_missing: true
   train_ratio: 0.7
   val_ratio: 0.15
-  lookback: 16
+  lookback: 32
   horizon: 16
+  use_future_weather: false
 
 model:
   name: improved_bnn
-  hidden_dim: 128
+  hidden_dim: 256
   branch_dim: 64
   prior_sigma: 1.0
 
@@ -20,9 +21,9 @@ training:
   device: auto
   epochs: 60
   batch_size: 64
-  lr: 0.001
+  lr: 0.00019544293665253097
   weight_decay: 0.0001
-  kl_beta: 0.0001
+  kl_beta: 1.2114960587728605e-05
   patience: 10
 
 prediction:
@@ -40,3 +41,6 @@ compare:
     - mlp_baseline
     - cnn_baseline
     - mc_dropout
+
+evaluation:
+  run_test: true

@@ -6,7 +6,7 @@
 2. scaler 只在训练集上 fit，再用于验证集和测试集 transform。
 
 窗口形式为：过去 `lookback` 步作为历史输入，未来 `horizon` 步作为预测目标。
-当前默认配置是过去 96 个 15 分钟点预测未来 16 个 15 分钟点，即 24h -> 4h。
+当前默认配置是过去 32 个 15 分钟点预测未来 16 个 15 分钟点，即 8h -> 4h。
 """
 
 from __future__ import annotations
@@ -77,15 +77,17 @@ def make_window_arrays(
     columns: FeatureColumns,
     lookback: int,
     horizon: int,
+    use_future_weather: bool = False,
 ) -> WindowArrays:
     """把连续时间序列转换成监督学习样本。
 
     对于起点 start：
     - history 使用 [start, start + lookback)。
-    - target/weather/time 使用 [start + lookback, start + lookback + horizon)。
+    - target/time 使用 [start + lookback, start + lookback + horizon)。
+    - weather 默认使用 history 最后一个时刻并在 horizon 内持久化，避免未来实测气象泄漏。
     - direct 使用 history 的最后一个时刻，即 start + lookback - 1。
 
-    这样保证目标窗口的任何目标值都不会进入历史输入。
+    如果已接入真实数值天气预报，可设置 use_future_weather=True 使用目标窗口天气特征。
     """
     if lookback <= 0 or horizon <= 0:
         raise ValueError("lookback and horizon must be positive")
@@ -112,8 +114,14 @@ def make_window_arrays(
         target_end = hist_end + horizon
         # 历史序列输入给 CNN 分支，保留二维结构 [time, feature]。
         history.append(ordered.iloc[start:hist_end][columns.history].to_numpy(dtype=np.float32))
-        # 天气和时间特征按照预测窗口展开，表示未来每个 horizon 的条件输入。
-        weather.append(ordered.iloc[hist_end:target_end][columns.weather].to_numpy(dtype=np.float32))
+        # 默认没有真实 NWP 时，不能使用目标窗口内的实测天气；用最近观测值做持久化基线。
+        if use_future_weather:
+            weather_window = ordered.iloc[hist_end:target_end][columns.weather].to_numpy(dtype=np.float32)
+        else:
+            last_weather = ordered.iloc[[hist_end - 1]][columns.weather].to_numpy(dtype=np.float32)
+            weather_window = np.repeat(last_weather, repeats=horizon, axis=0)
+        weather.append(weather_window)
+        # 时间特征由目标时间戳确定，不属于未来观测泄漏。
         time_features.append(ordered.iloc[hist_end:target_end][columns.time].to_numpy(dtype=np.float32))
         # direct 分支只取预测点前一时刻，模拟论文中的“直接输入部分”。
         direct.append(ordered.iloc[hist_end - 1][columns.direct].to_numpy(dtype=np.float32))

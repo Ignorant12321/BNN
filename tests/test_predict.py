@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src.predict import select_prediction_plot_data
+from src.predict import interval_from_mean_std, select_prediction_plot_data
 
 
 def test_select_prediction_plot_data_skips_night_by_default():
@@ -60,3 +60,15 @@ def test_select_prediction_plot_data_falls_back_when_no_daylight_exists():
 
     np.testing.assert_array_equal(view["y_true"], np.array([0.0]))
     assert view["reason"] == "fallback_first_points"
+
+
+def test_interval_from_mean_std_uses_aleatoric_uncertainty():
+    """预测区间应随模型输出标准差变宽，而不是只依赖 MC 均值样本。"""
+    mean = np.array([[10.0, 20.0]])
+    std = np.array([[2.0, 4.0]])
+
+    lower, upper = interval_from_mean_std(mean, std, 0.95)
+
+    assert lower[0, 0] < 10.0
+    assert upper[0, 0] > 10.0
+    assert (upper[0, 1] - lower[0, 1]) > (upper[0, 0] - lower[0, 0])

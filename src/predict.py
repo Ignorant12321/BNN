@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from statistics import NormalDist
+
 import numpy as np
 import pandas as pd
 
@@ -60,6 +62,21 @@ def interval_from_samples(samples: np.ndarray, level: float) -> tuple[np.ndarray
     """从 MC 样本中计算给定置信水平的分位数区间。"""
     alpha = 1.0 - level
     return np.quantile(samples, alpha / 2, axis=0), np.quantile(samples, 1 - alpha / 2, axis=0)
+
+
+def interval_from_mean_std(mean: np.ndarray, std: np.ndarray, level: float) -> tuple[np.ndarray, np.ndarray]:
+    """从预测均值和总标准差计算中心预测区间。
+
+    std 来自 `mc_predict` 时包含两部分：权重采样均值方差和模型输出的
+    aleatoric 方差，因此该区间比仅对 MC 均值样本取分位数更完整。
+    """
+    if not 0 < level < 1:
+        raise ValueError("level must be between 0 and 1")
+    mean = np.asarray(mean, dtype=float)
+    std = np.asarray(std, dtype=float)
+    z = NormalDist().inv_cdf(0.5 + level / 2)
+    width = z * np.maximum(std, 0.0)
+    return mean - width, mean + width
 
 
 def select_prediction_plot_data(

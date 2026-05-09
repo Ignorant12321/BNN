@@ -5,16 +5,19 @@
     python -m src.tune
 
 每个 trial 会复制 `configs/tuning.yaml`，替换若干超参数，然后调用完整训练流程。
-目标函数默认最小化测试集 RMSE。由于每个 trial 都会真实训练模型，运行时间会
+目标函数默认最小化验证集 RMSE。由于每个 trial 都会真实训练模型，运行时间会
 明显长于单次训练。
 """
 
 from __future__ import annotations
 
 import copy
+import json
+from datetime import datetime
+from pathlib import Path
 
 from src.train import run_training
-from src.utils import load_config
+from src.utils import load_config, save_config, save_json
 
 
 def main() -> None:
@@ -25,7 +28,7 @@ def main() -> None:
 
     def objective(trial):
         """单个 trial 的目标函数。"""
-        config = copy.deepcopy(base)
+        config = prepare_trial_config(base)
         # 模型容量相关参数。
         config["model"]["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
         config["model"]["branch_dim"] = trial.suggest_categorical("branch_dim", [32, 64, 128])
@@ -33,15 +36,67 @@ def main() -> None:
         config["training"]["lr"] = trial.suggest_float("lr", 1e-4, 3e-3, log=True)
         config["training"]["kl_beta"] = trial.suggest_float("kl_beta", 1e-5, 1e-2, log=True)
         run_dir = run_training(config)
-        import json
-
-        with open(run_dir / "metrics" / "metrics.json", "r", encoding="utf-8") as f:
-            return json.load(f)["rmse"]
+        return load_objective_metric(run_dir, metric="rmse")
 
     # direction=minimize 表示 RMSE 越小越好。
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=base["tuning"]["n_trials"])
     print(study.best_params)
+    export_dir = export_study_results(study, base)
+    print(f"Tuning results exported to: {export_dir}")
+
+
+def prepare_trial_config(base_config: dict) -> dict:
+    """复制基础配置，并让调参 trial 只评估验证集。"""
+    config = copy.deepcopy(base_config)
+    config.setdefault("evaluation", {})
+    config["evaluation"]["run_test"] = False
+    return config
+
+
+def merge_best_params(base_config: dict, best_params: dict) -> dict:
+    """把 Optuna 最佳参数合并到一份训练配置副本中。"""
+    config = copy.deepcopy(base_config)
+    config.setdefault("model", {})
+    config.setdefault("training", {})
+    if "hidden_dim" in best_params:
+        config["model"]["hidden_dim"] = best_params["hidden_dim"]
+    if "branch_dim" in best_params:
+        config["model"]["branch_dim"] = best_params["branch_dim"]
+    if "lr" in best_params:
+        config["training"]["lr"] = best_params["lr"]
+    if "kl_beta" in best_params:
+        config["training"]["kl_beta"] = best_params["kl_beta"]
+    return config
+
+
+def export_study_results(study, base_config: dict, run_name: str | None = None) -> Path:
+    """导出 Optuna 调参结果和可直接复用的最佳配置。"""
+    if run_name is None:
+        run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
+    export_dir = Path(base_config["output_dir"]) / "tuning" / run_name
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = {
+        "best_trial": study.best_trial.number,
+        "best_value": float(study.best_value),
+        "best_params": dict(study.best_params),
+    }
+    save_json(summary, export_dir / "best_params.json")
+    study.trials_dataframe().to_csv(export_dir / "trials.csv", index=False)
+    save_config(merge_best_params(base_config, study.best_params), export_dir / "best_config.yaml")
+    return export_dir
+
+
+def load_objective_metric(run_dir: str | Path, metric: str = "rmse") -> float:
+    """读取 Optuna 目标指标。
+
+    调参必须使用验证集指标，避免测试集参与模型选择。
+    """
+    path = Path(run_dir) / "metrics" / "validation_metrics.json"
+    with open(path, "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+    return float(metrics[metric])
 
 
 if __name__ == "__main__":

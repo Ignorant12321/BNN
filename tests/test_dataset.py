@@ -38,6 +38,32 @@ def test_make_window_arrays_uses_past_history_and_future_targets():
     np.testing.assert_array_equal(arrays.target[0], np.array([4.0, 5.0, 6.0]))
 
 
+def test_make_window_arrays_uses_weather_persistence_by_default():
+    """默认不能把目标窗口内的未来实测气象作为模型输入。"""
+    df = _frame(12)
+    columns = split_feature_columns()
+
+    arrays = make_window_arrays(df, columns, lookback=4, horizon=3)
+
+    expected = np.repeat(
+        df.iloc[[3]][columns.weather].to_numpy(dtype=np.float32),
+        repeats=3,
+        axis=0,
+    )
+    np.testing.assert_array_equal(arrays.weather[0], expected)
+
+
+def test_make_window_arrays_can_use_future_weather_when_nwp_available():
+    """若接入真实 NWP，可显式使用预测窗口天气特征。"""
+    df = _frame(12)
+    columns = split_feature_columns()
+
+    arrays = make_window_arrays(df, columns, lookback=4, horizon=3, use_future_weather=True)
+
+    expected = df.iloc[4:7][columns.weather].to_numpy(dtype=np.float32)
+    np.testing.assert_array_equal(arrays.weather[0], expected)
+
+
 def test_build_time_splits_are_chronological():
     """训练、验证、测试集必须保持严格时间顺序。"""
     df = _frame(100)

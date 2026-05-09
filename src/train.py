@@ -37,8 +37,8 @@ from src.features import add_basic_features, split_feature_columns
 from src.losses import elbo_loss
 from src.metrics import horizon_metrics
 from src.models.improved_bnn import ImprovedBayesianPVNet
-from src.predict import interval_from_samples, mc_predict, select_prediction_plot_data
-from src.utils import create_run_dir, resolve_device, save_config, save_json, save_pickle, set_seed, setup_logger
+from src.predict import interval_from_mean_std, mc_predict, select_prediction_plot_data
+from src.utils import create_run_dir, describe_device, resolve_device, save_config, save_json, save_pickle, set_seed, setup_logger
 from src.visualization import (
     plot_calibration_curve,
     plot_horizon_rmse,
@@ -79,7 +79,7 @@ def run_training(config: dict) -> Path:
     run_dir = create_run_dir(config["output_dir"], config["model"]["name"])
     logger = setup_logger(run_dir / "logs" / "train.log")
     save_config(config, run_dir / "config.yaml")
-    logger.info("Using device: %s", device)
+    logger.info("Device status: %s", describe_device(device))
 
     # 读取并预处理数据。这里得到的是电站级时间序列，而不是单个逆变器序列。
     df = load_plant_dataframe(
@@ -93,10 +93,11 @@ def run_training(config: dict) -> Path:
     splits = build_time_splits(df, config["data"]["train_ratio"], config["data"]["val_ratio"])
     lookback = config["data"]["lookback"]
     horizon = config["data"]["horizon"]
+    use_future_weather = config["data"].get("use_future_weather", False)
 
-    raw_train = make_window_arrays(splits.train, columns, lookback, horizon)
-    raw_val = make_window_arrays(splits.val, columns, lookback, horizon)
-    raw_test = make_window_arrays(splits.test, columns, lookback, horizon)
+    raw_train = make_window_arrays(splits.train, columns, lookback, horizon, use_future_weather=use_future_weather)
+    raw_val = make_window_arrays(splits.val, columns, lookback, horizon, use_future_weather=use_future_weather)
+    raw_test = make_window_arrays(splits.test, columns, lookback, horizon, use_future_weather=use_future_weather)
     # scaler 只在训练集 fit，这是防止数据泄漏的重要步骤。
     scalers = fit_scalers(raw_train)
     train_arrays = transform_windows(raw_train, scalers)
@@ -144,27 +145,29 @@ def run_training(config: dict) -> Path:
                 logger.info("early stopping at epoch %d", epoch)
                 break
 
-    # 使用验证集上最好的权重进行测试集 MC 推理。
+    # 使用验证集上最好的权重进行 MC 推理。
     checkpoint = torch.load(run_dir / "checkpoints" / "best_model.pt", map_location=device)
     model.load_state_dict(checkpoint["model_state"])
-    pred = mc_predict(model, test_loader, device, mc_samples=config["prediction"]["mc_samples"])
-    # 模型是在标准化空间训练的，保存结果前需要恢复到真实功率尺度。
-    target = _inverse_target(pred["target"], scalers["target"])
-    mean = _inverse_target(pred["mean"], scalers["target"])
-    std = pred["std"] * float(scalers["target"].scale_[0])
-    samples = np.stack([_inverse_target(s, scalers["target"]) for s in pred["samples"]], axis=0)
 
-    metrics = evaluate_predictions(target, mean, std, samples)
+    val_outputs = _predict_in_original_scale(model, val_loader, device, scalers, config["prediction"]["mc_samples"])
+    validation_metrics = evaluate_predictions(*val_outputs)
     # 保存表格类结果。
+    save_json(validation_metrics, run_dir / "metrics" / "validation_metrics.json")
+    plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
+    _save_artifacts(run_dir, columns, scalers, splits)
+    if not config.get("evaluation", {}).get("run_test", True):
+        logger.info("validation-only run complete: %s", run_dir)
+        return run_dir
+
+    target, mean, std, samples = _predict_in_original_scale(model, test_loader, device, scalers, config["prediction"]["mc_samples"])
+    metrics = evaluate_predictions(target, mean, std, samples)
     save_json(metrics, run_dir / "metrics" / "metrics.json")
     pd.DataFrame(horizon_metrics(target, mean)).to_csv(run_dir / "metrics" / "point_metrics.csv", index=False)
     pd.DataFrame([metrics]).to_csv(run_dir / "metrics" / "probabilistic_metrics.csv", index=False)
     _save_predictions(run_dir, raw_test.target_times, target, mean, std, samples)
-    _save_artifacts(run_dir, columns, scalers, splits)
     # 保存论文中常用的可视化图。
-    plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
-    lower90, upper90 = interval_from_samples(samples, 0.90)
-    lower95, upper95 = interval_from_samples(samples, 0.95)
+    lower90, upper90 = interval_from_mean_std(mean, std, 0.90)
+    lower95, upper95 = interval_from_mean_std(mean, std, 0.95)
     plot_config = config.get("prediction", {}).get("plot", {})
     view90 = select_prediction_plot_data(
         raw_test.target_times,
@@ -209,7 +212,7 @@ def run_training(config: dict) -> Path:
     )
     plot_horizon_rmse(target, mean, run_dir / "figures" / "horizon_rmse.png")
     plot_picp_pinaw(target, {"90%": (lower90, upper90), "95%": (lower95, upper95)}, run_dir / "figures" / "picp_pinaw.png")
-    plot_calibration_curve(target, samples, run_dir / "figures" / "calibration_curve.png")
+    plot_calibration_curve(target, mean, std, run_dir / "figures" / "calibration_curve.png")
     logger.info("run complete: %s", run_dir)
     return run_dir
 
@@ -251,6 +254,16 @@ def _eval_loss(model, loader, device, beta: float) -> float:
 def _inverse_target(values: np.ndarray, scaler) -> np.ndarray:
     """把标准化后的目标值恢复到原始 AC_POWER 尺度。"""
     return scaler.inverse_transform(values.reshape(-1, 1)).reshape(values.shape)
+
+
+def _predict_in_original_scale(model, loader, device, scalers, mc_samples: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """执行 MC 推理并把目标、均值、标准差恢复到真实功率尺度。"""
+    pred = mc_predict(model, loader, device, mc_samples=mc_samples)
+    target = _inverse_target(pred["target"], scalers["target"])
+    mean = _inverse_target(pred["mean"], scalers["target"])
+    std = pred["std"] * float(scalers["target"].scale_[0])
+    samples = np.stack([_inverse_target(s, scalers["target"]) for s in pred["samples"]], axis=0)
+    return target, mean, std, samples
 
 
 def _save_predictions(run_dir: Path, target_times: np.ndarray, target: np.ndarray, mean: np.ndarray, std: np.ndarray, samples: np.ndarray) -> None:

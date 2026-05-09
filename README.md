@@ -55,7 +55,8 @@ dataset/Plant_1_Weather_Sensor_Data.csv
 - 将 22 个逆变器数据聚合为电站级数据
 - 按时间合并气象数据
 - 补齐 15 分钟时间序列
-- 构造 24h 历史窗口到未来 4h 预测窗口
+- 构造 8h 历史窗口到未来 4h 预测窗口
+- 默认使用最近实测气象的持久化值作为未来天气输入，避免把未来实测气象泄漏给模型
 
 默认预测目标是电站级 `AC_POWER`。
 
@@ -122,8 +123,9 @@ python -m src.train --config configs/default.yaml
 
 ```yaml
 data:
-  lookback: 96    # 过去 96 个 15 分钟点，即 24h
+  lookback: 32    # 过去 32 个 15 分钟点，即 8h
   horizon: 16     # 未来 16 个 15 分钟点，即 4h
+  use_future_weather: false  # 无真实 NWP 时保持 false，避免未来气象泄漏
 
 training:
   device: auto    # 自动使用 cuda，无法使用时回退 cpu
@@ -139,15 +141,18 @@ prediction:
     max_points: 160
     # start_time: "2020-06-13 08:00:00"
     # end_time: "2020-06-13 12:00:00"
+
+evaluation:
+  run_test: true  # 正式训练评估测试集；Optuna trial 会自动改为 false
 ```
 
 训练时日志会显示设备：
 
 ```text
-Using device: cuda
+Device status: device=cuda, cuda_available=True, gpu=NVIDIA GeForce RTX ...
 ```
 
-如果看到 `cuda`，说明正在使用 GPU。
+如果 `device=cpu` 或 `cuda_available=False`，说明当前 Python 环境没有让 PyTorch 使用 CUDA。
 
 ## 5. 查看输出结果
 
@@ -244,7 +249,7 @@ prediction:
 python -m src.tune
 ```
 
-调参配置在 [configs/tuning.yaml](configs/tuning.yaml)。默认会搜索：
+调参配置在 [configs/tuning.yaml](configs/tuning.yaml)。Optuna trial 只保存并优化验证集 RMSE，不评估测试集；测试集只用于最终正式实验。默认会搜索：
 
 - `hidden_dim`
 - `branch_dim`
@@ -351,9 +356,9 @@ prediction:
 - 数据来源：Plant 1 光伏发电与气象传感器数据
 - 时间粒度：15 分钟
 - 预测任务：未来 4h，即 16 步超短期预测
-- 输入窗口：过去 24h，即 96 步历史数据
+- 输入窗口：过去 8h，即 32 步历史数据
 - 模型结构：历史 CNN 分支、天气 MLP 分支、时间分支、直接输入分支、贝叶斯概率层
-- 不确定性估计：通过 BayesianLinear 权重采样和 MC 前向传播得到预测样本分布
+- 不确定性估计：通过 BayesianLinear 权重采样和模型输出方差共同构造预测分布
 - 评价指标：MAE、RMSE、nRMSE、sMAPE、NLL、PICP、PINAW
 
-需要注意：当前公开数据集中使用的是实测气象数据，不是真正的数值天气预报 NWP。论文中可以说明，本实验在数据集限制下使用预测时刻对应气象观测值近似天气输入；后续若接入真实 NWP，只需替换天气特征来源。
+需要注意：当前公开数据集中使用的是实测气象数据，不是真正的数值天气预报 NWP。默认实验使用最近时刻气象持久化作为未来天气输入，避免使用预测窗口内的未来实测气象；后续若接入真实 NWP，可将 `use_future_weather` 改为 `true` 或替换为 NWP 特征来源。
