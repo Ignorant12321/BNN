@@ -18,10 +18,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# 允许两种运行方式都能找到 `src` 包：
+# 1. 推荐方式：python -m src.train
+# 2. 直接方式：python src/train.py
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import load_plant_dataframe
 from src.dataset import PVWindowDataset, build_time_splits, fit_scalers, make_window_arrays, transform_windows
@@ -30,7 +37,7 @@ from src.features import add_basic_features, split_feature_columns
 from src.losses import elbo_loss
 from src.metrics import horizon_metrics
 from src.models.improved_bnn import ImprovedBayesianPVNet
-from src.predict import interval_from_samples, mc_predict
+from src.predict import interval_from_samples, mc_predict, select_prediction_plot_data
 from src.utils import create_run_dir, resolve_device, save_config, save_json, save_pickle, set_seed, setup_logger
 from src.visualization import (
     plot_calibration_curve,
@@ -158,8 +165,48 @@ def run_training(config: dict) -> Path:
     plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
     lower90, upper90 = interval_from_samples(samples, 0.90)
     lower95, upper95 = interval_from_samples(samples, 0.95)
-    plot_prediction_interval(target, mean, lower90, upper90, run_dir / "figures" / "prediction_interval_90.png")
-    plot_prediction_interval(target, mean, lower95, upper95, run_dir / "figures" / "prediction_interval_95.png")
+    plot_config = config.get("prediction", {}).get("plot", {})
+    view90 = select_prediction_plot_data(
+        raw_test.target_times,
+        target,
+        mean,
+        lower90,
+        upper90,
+        start_time=plot_config.get("start_time"),
+        end_time=plot_config.get("end_time"),
+        prefer_daylight=plot_config.get("prefer_daylight", True),
+        daylight_threshold=plot_config.get("daylight_threshold", 1.0),
+        max_points=plot_config.get("max_points", 160),
+    )
+    view95 = select_prediction_plot_data(
+        raw_test.target_times,
+        target,
+        mean,
+        lower95,
+        upper95,
+        start_time=plot_config.get("start_time"),
+        end_time=plot_config.get("end_time"),
+        prefer_daylight=plot_config.get("prefer_daylight", True),
+        daylight_threshold=plot_config.get("daylight_threshold", 1.0),
+        max_points=plot_config.get("max_points", 160),
+    )
+    logger.info("prediction interval plot selection: %s", view90["reason"])
+    plot_prediction_interval(
+        view90["y_true"],
+        view90["mean"],
+        view90["lower"],
+        view90["upper"],
+        run_dir / "figures" / "prediction_interval_90.png",
+        times=view90["times"],
+    )
+    plot_prediction_interval(
+        view95["y_true"],
+        view95["mean"],
+        view95["lower"],
+        view95["upper"],
+        run_dir / "figures" / "prediction_interval_95.png",
+        times=view95["times"],
+    )
     plot_horizon_rmse(target, mean, run_dir / "figures" / "horizon_rmse.png")
     plot_picp_pinaw(target, {"90%": (lower90, upper90), "95%": (lower95, upper95)}, run_dir / "figures" / "picp_pinaw.png")
     plot_calibration_curve(target, samples, run_dir / "figures" / "calibration_curve.png")

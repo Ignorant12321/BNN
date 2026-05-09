@@ -133,6 +133,12 @@ training:
 
 prediction:
   mc_samples: 50  # MC 前向传播次数，用于估计不确定性
+  plot:
+    prefer_daylight: true      # 默认避开夜间零功率段
+    daylight_threshold: 1.0
+    max_points: 160
+    # start_time: "2020-06-13 08:00:00"
+    # end_time: "2020-06-13 12:00:00"
 ```
 
 训练时日志会显示设备：
@@ -201,6 +207,17 @@ artifacts/
 - `figures/calibration_curve.png`：概率预测校准效果
 - `predictions/test_predictions.csv`：测试集逐点预测结果
 - `predictions/uncertainty_samples.npy`：MC 采样结果
+
+默认情况下，预测区间图会自动跳过测试集开头的夜间零功率点，从第一个真实出力大于 `prediction.plot.daylight_threshold` 的时刻开始展示。如果希望固定展示某个时间段，可在配置文件中填写：
+
+```yaml
+prediction:
+  plot:
+    start_time: "2020-06-13 08:00:00"
+    end_time: "2020-06-13 12:00:00"
+```
+
+指定时间段会优先于自动白天选择。
 
 ## 6. 指标含义
 

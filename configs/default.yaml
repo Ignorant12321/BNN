@@ -7,7 +7,7 @@ data:
   fill_missing: true
   train_ratio: 0.7
   val_ratio: 0.15
-  lookback: 96
+  lookback: 16
   horizon: 16
 
 model:
@@ -27,3 +27,11 @@ training:
 
 prediction:
   mc_samples: 50
+  plot:
+    # 不填写时间段时，自动从测试集中第一个有明显出力的白天点开始画图。
+    prefer_daylight: true
+    daylight_threshold: 1.0
+    max_points: 160
+    # 如需指定展示时间段，取消注释并填写测试集内的时间。
+    # start_time: "2020-06-13 08:00:00"
+    # end_time: "2020-06-13 12:00:00"

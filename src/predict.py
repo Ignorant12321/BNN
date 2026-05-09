@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 
 def mc_predict(model, loader, device, mc_samples: int = 50) -> dict[str, np.ndarray]:
@@ -59,3 +60,97 @@ def interval_from_samples(samples: np.ndarray, level: float) -> tuple[np.ndarray
     """从 MC 样本中计算给定置信水平的分位数区间。"""
     alpha = 1.0 - level
     return np.quantile(samples, alpha / 2, axis=0), np.quantile(samples, 1 - alpha / 2, axis=0)
+
+
+def select_prediction_plot_data(
+    target_times: np.ndarray,
+    y_true: np.ndarray,
+    mean: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    prefer_daylight: bool = True,
+    daylight_threshold: float = 1.0,
+    max_points: int = 160,
+) -> dict[str, np.ndarray | str]:
+    """为预测区间图选择展示数据。
+
+    训练集切分后的测试集通常从夜间开始，如果直接画前若干点，图上会出现
+    大段零功率，不利于观察模型对日间波动的预测能力。本函数提供两种选择
+    方式：
+
+    1. 配置了 start_time/end_time 时，优先选择该目标时间段。
+    2. 未配置时间段时，默认从第一个真实出力大于 daylight_threshold 的点开始。
+
+    如果指定时间段没有命中，或测试集没有日间出力，则回退到前 max_points 个点。
+    """
+    flat_times = pd.to_datetime(np.asarray(target_times).reshape(-1))
+    flat_true = np.asarray(y_true).reshape(-1)
+    flat_mean = np.asarray(mean).reshape(-1)
+    flat_lower = np.asarray(lower).reshape(-1)
+    flat_upper = np.asarray(upper).reshape(-1)
+
+    if start_time or end_time:
+        mask = np.ones(len(flat_times), dtype=bool)
+        if start_time:
+            mask &= flat_times >= pd.Timestamp(start_time)
+        if end_time:
+            mask &= flat_times <= pd.Timestamp(end_time)
+        indices = np.flatnonzero(mask)
+        if len(indices) > 0:
+            return _slice_prediction_view(
+                flat_times,
+                flat_true,
+                flat_mean,
+                flat_lower,
+                flat_upper,
+                indices[:max_points],
+                "configured_time_range",
+            )
+
+    if prefer_daylight:
+        daylight_indices = np.flatnonzero(flat_true > daylight_threshold)
+        if len(daylight_indices) > 0:
+            start = int(daylight_indices[0])
+            end = min(start + max_points, len(flat_true))
+            return _slice_prediction_view(
+                flat_times,
+                flat_true,
+                flat_mean,
+                flat_lower,
+                flat_upper,
+                np.arange(start, end),
+                "auto_daylight",
+            )
+
+    end = min(max_points, len(flat_true))
+    return _slice_prediction_view(
+        flat_times,
+        flat_true,
+        flat_mean,
+        flat_lower,
+        flat_upper,
+        np.arange(end),
+        "fallback_first_points",
+    )
+
+
+def _slice_prediction_view(
+    times: pd.DatetimeIndex,
+    y_true: np.ndarray,
+    mean: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    indices: np.ndarray,
+    reason: str,
+) -> dict[str, np.ndarray | str]:
+    """按一组扁平索引切出画图所需字段。"""
+    return {
+        "times": times.to_numpy()[indices],
+        "y_true": y_true[indices],
+        "mean": mean[indices],
+        "lower": lower[indices],
+        "upper": upper[indices],
+        "reason": reason,
+    }

@@ -1,0 +1,26 @@
+"""命令行入口回归测试。"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("torch")
+
+
+def test_train_script_help_works_when_executed_directly() -> None:
+    """直接运行 src/train.py 时也应能解析包内导入。"""
+    repo_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [sys.executable, str(repo_root / "src" / "train.py"), "--help"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--config" in result.stdout

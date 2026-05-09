@@ -33,11 +33,13 @@ def plot_prediction_interval(
     lower: np.ndarray,
     upper: np.ndarray,
     path: str | Path,
+    times: np.ndarray | None = None,
     max_points: int = 160,
 ) -> None:
     """绘制真实值、预测均值和预测区间。
 
-    多步预测结果会先展平成一条序列，只展示前 max_points 个点，避免图像过密。
+    如果传入 times，则认为调用方已经选好了展示时间段；否则兼容旧逻辑，
+    把多步预测结果展平成一条序列并展示前 max_points 个点。
     """
     y = y_true.reshape(-1)[:max_points]
     m = mean.reshape(-1)[:max_points]
@@ -48,7 +50,14 @@ def plot_prediction_interval(
     plt.plot(x, y, label="true", linewidth=1)
     plt.plot(x, m, label="mean", linewidth=1)
     plt.fill_between(x, lo, hi, alpha=0.25, label="interval")
-    plt.xlabel("Step")
+    if times is not None and len(times) > 0:
+        tick_count = min(6, len(times))
+        tick_positions = np.linspace(0, len(times) - 1, tick_count, dtype=int)
+        tick_labels = [np.datetime_as_string(np.asarray(times)[i], unit="m").replace("T", "\n") for i in tick_positions]
+        plt.xticks(tick_positions, tick_labels)
+        plt.xlabel("Target time")
+    else:
+        plt.xlabel("Step")
     plt.ylabel("AC Power")
     plt.legend()
     plt.tight_layout()
