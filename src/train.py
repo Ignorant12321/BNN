@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.data import load_plant_dataframe
+from src.dataset import PVWindowDataset, build_time_splits, fit_scalers, make_window_arrays, transform_windows
+from src.evaluate import evaluate_predictions
+from src.features import add_basic_features, split_feature_columns
+from src.losses import elbo_loss
+from src.metrics import horizon_metrics
+from src.models.improved_bnn import ImprovedBayesianPVNet
+from src.predict import interval_from_samples, mc_predict
+from src.utils import create_run_dir, resolve_device, save_config, save_json, save_pickle, set_seed, setup_logger
+from src.visualization import (
+    plot_calibration_curve,
+    plot_horizon_rmse,
+    plot_loss_curve,
+    plot_picp_pinaw,
+    plot_prediction_interval,
+)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="configs/default.yaml")
+    args = parser.parse_args()
+
+    from src.utils import load_config
+
+    config = load_config(args.config)
+    run_training(config)
+
+
+def run_training(config: dict) -> Path:
+    import torch
+    from torch.utils.data import DataLoader
+
+    set_seed(config["seed"])
+    device = resolve_device(config["training"]["device"])
+    run_dir = create_run_dir(config["output_dir"], config["model"]["name"])
+    logger = setup_logger(run_dir / "logs" / "train.log")
+    save_config(config, run_dir / "config.yaml")
+    logger.info("Using device: %s", device)
+
+    df = load_plant_dataframe(
+        config["data"]["generation_path"],
+        config["data"]["weather_path"],
+        fill_missing=config["data"].get("fill_missing", True),
+    )
+    df = add_basic_features(df)
+    columns = split_feature_columns()
+    splits = build_time_splits(df, config["data"]["train_ratio"], config["data"]["val_ratio"])
+    lookback = config["data"]["lookback"]
+    horizon = config["data"]["horizon"]
+
+    raw_train = make_window_arrays(splits.train, columns, lookback, horizon)
+    raw_val = make_window_arrays(splits.val, columns, lookback, horizon)
+    raw_test = make_window_arrays(splits.test, columns, lookback, horizon)
+    scalers = fit_scalers(raw_train)
+    train_arrays = transform_windows(raw_train, scalers)
+    val_arrays = transform_windows(raw_val, scalers)
+    test_arrays = transform_windows(raw_test, scalers)
+
+    train_loader = DataLoader(PVWindowDataset(train_arrays), batch_size=config["training"]["batch_size"], shuffle=True)
+    val_loader = DataLoader(PVWindowDataset(val_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
+    test_loader = DataLoader(PVWindowDataset(test_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
+
+    model = ImprovedBayesianPVNet(
+        history_features=len(columns.history),
+        weather_features=len(columns.weather),
+        time_features=len(columns.time),
+        direct_features=len(columns.direct),
+        horizon=horizon,
+        hidden_dim=config["model"]["hidden_dim"],
+        branch_dim=config["model"]["branch_dim"],
+        prior_sigma=config["model"]["prior_sigma"],
+    ).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"], weight_decay=config["training"]["weight_decay"])
+
+    best_val = float("inf")
+    train_losses: list[float] = []
+    val_losses: list[float] = []
+    patience = config["training"]["patience"]
+    stale_epochs = 0
+
+    for epoch in range(1, config["training"]["epochs"] + 1):
+        train_loss = _train_epoch(model, train_loader, optimizer, device, beta=config["training"]["kl_beta"])
+        val_loss = _eval_loss(model, val_loader, device, beta=config["training"]["kl_beta"])
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        logger.info("epoch=%03d train_loss=%.6f val_loss=%.6f", epoch, train_loss, val_loss)
+        torch.save({"model_state": model.state_dict(), "config": config}, run_dir / "checkpoints" / "last_model.pt")
+        if val_loss < best_val:
+            best_val = val_loss
+            stale_epochs = 0
+            torch.save({"model_state": model.state_dict(), "config": config}, run_dir / "checkpoints" / "best_model.pt")
+        else:
+            stale_epochs += 1
+            if stale_epochs >= patience:
+                logger.info("early stopping at epoch %d", epoch)
+                break
+
+    checkpoint = torch.load(run_dir / "checkpoints" / "best_model.pt", map_location=device)
+    model.load_state_dict(checkpoint["model_state"])
+    pred = mc_predict(model, test_loader, device, mc_samples=config["prediction"]["mc_samples"])
+    target = _inverse_target(pred["target"], scalers["target"])
+    mean = _inverse_target(pred["mean"], scalers["target"])
+    std = pred["std"] * float(scalers["target"].scale_[0])
+    samples = np.stack([_inverse_target(s, scalers["target"]) for s in pred["samples"]], axis=0)
+
+    metrics = evaluate_predictions(target, mean, std, samples)
+    save_json(metrics, run_dir / "metrics" / "metrics.json")
+    pd.DataFrame(horizon_metrics(target, mean)).to_csv(run_dir / "metrics" / "point_metrics.csv", index=False)
+    pd.DataFrame([metrics]).to_csv(run_dir / "metrics" / "probabilistic_metrics.csv", index=False)
+    _save_predictions(run_dir, raw_test.target_times, target, mean, std, samples)
+    _save_artifacts(run_dir, columns, scalers, splits)
+    plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
+    lower90, upper90 = interval_from_samples(samples, 0.90)
+    lower95, upper95 = interval_from_samples(samples, 0.95)
+    plot_prediction_interval(target, mean, lower90, upper90, run_dir / "figures" / "prediction_interval_90.png")
+    plot_prediction_interval(target, mean, lower95, upper95, run_dir / "figures" / "prediction_interval_95.png")
+    plot_horizon_rmse(target, mean, run_dir / "figures" / "horizon_rmse.png")
+    plot_picp_pinaw(target, {"90%": (lower90, upper90), "95%": (lower95, upper95)}, run_dir / "figures" / "picp_pinaw.png")
+    plot_calibration_curve(target, samples, run_dir / "figures" / "calibration_curve.png")
+    logger.info("run complete: %s", run_dir)
+    return run_dir
+
+
+def _train_epoch(model, loader, optimizer, device, beta: float) -> float:
+    model.train()
+    losses = []
+    for batch in loader:
+        batch = {k: v.to(device) for k, v in batch.items()}
+        target = batch.pop("target")
+        optimizer.zero_grad(set_to_none=True)
+        mean, log_var = model(batch)
+        loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
+        loss.backward()
+        optimizer.step()
+        losses.append(float(loss.detach().cpu()))
+    return float(np.mean(losses))
+
+
+def _eval_loss(model, loader, device, beta: float) -> float:
+    import torch
+
+    model.eval()
+    losses = []
+    with torch.no_grad():
+        for batch in loader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            target = batch.pop("target")
+            mean, log_var = model(batch)
+            loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
+            losses.append(float(loss.detach().cpu()))
+    return float(np.mean(losses))
+
+
+def _inverse_target(values: np.ndarray, scaler) -> np.ndarray:
+    return scaler.inverse_transform(values.reshape(-1, 1)).reshape(values.shape)
+
+
+def _save_predictions(run_dir: Path, target_times: np.ndarray, target: np.ndarray, mean: np.ndarray, std: np.ndarray, samples: np.ndarray) -> None:
+    rows = []
+    for i in range(target.shape[0]):
+        for h in range(target.shape[1]):
+            rows.append(
+                {
+                    "sample": i,
+                    "horizon": h + 1,
+                    "target_time": str(target_times[i, h]),
+                    "y_true": target[i, h],
+                    "y_mean": mean[i, h],
+                    "y_std": std[i, h],
+                }
+            )
+    pd.DataFrame(rows).to_csv(run_dir / "predictions" / "test_predictions.csv", index=False)
+    np.save(run_dir / "predictions" / "uncertainty_samples.npy", samples)
+
+
+def _save_artifacts(run_dir: Path, columns, scalers, splits) -> None:
+    save_pickle(scalers["history"], run_dir / "artifacts" / "scaler_x.pkl")
+    save_pickle(scalers["target"], run_dir / "artifacts" / "scaler_y.pkl")
+    save_pickle(scalers, run_dir / "artifacts" / "all_scalers.pkl")
+    save_json(columns.__dict__, run_dir / "artifacts" / "feature_columns.json")
+    split_info = {
+        "train_start": str(splits.train["DATE_TIME"].min()),
+        "train_end": str(splits.train["DATE_TIME"].max()),
+        "val_start": str(splits.val["DATE_TIME"].min()),
+        "val_end": str(splits.val["DATE_TIME"].max()),
+        "test_start": str(splits.test["DATE_TIME"].min()),
+        "test_end": str(splits.test["DATE_TIME"].max()),
+    }
+    save_json(split_info, run_dir / "artifacts" / "split_info.json")
+
+
+if __name__ == "__main__":
+    main()
