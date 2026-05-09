@@ -1,3 +1,5 @@
+"""数据泄漏防护测试。"""
+
 import numpy as np
 import pandas as pd
 
@@ -6,6 +8,7 @@ from src.features import add_basic_features, split_feature_columns
 
 
 def test_window_timestamps_do_not_put_future_values_in_history():
+    """历史窗口最后时刻必须早于目标窗口第一时刻。"""
     n = 24
     df = pd.DataFrame(
         {

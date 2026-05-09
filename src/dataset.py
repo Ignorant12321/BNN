@@ -1,3 +1,14 @@
+"""时间切分、滑动窗口和 PyTorch Dataset。
+
+光伏预测是时间序列任务，最需要避免的是数据泄漏。因此本模块采取两个原则：
+
+1. 先按时间顺序切分 train/val/test，再在各自子集内部构造窗口。
+2. scaler 只在训练集上 fit，再用于验证集和测试集 transform。
+
+窗口形式为：过去 `lookback` 步作为历史输入，未来 `horizon` 步作为预测目标。
+当前默认配置是过去 96 个 15 分钟点预测未来 16 个 15 分钟点，即 24h -> 4h。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +22,8 @@ from src.features import FeatureColumns
 
 @dataclass
 class TimeSplits:
+    """按时间顺序切出的训练、验证、测试数据表。"""
+
     train: pd.DataFrame
     val: pd.DataFrame
     test: pd.DataFrame
@@ -18,6 +31,15 @@ class TimeSplits:
 
 @dataclass
 class WindowArrays:
+    """模型输入窗口数组集合。
+
+    history: [样本数, lookback, 历史特征数]
+    weather: [样本数, horizon, 天气特征数]
+    time: [样本数, horizon, 时间特征数]
+    direct: [样本数, 直接输入特征数]
+    target: [样本数, horizon]
+    """
+
     history: np.ndarray
     weather: np.ndarray
     time: np.ndarray
@@ -28,6 +50,11 @@ class WindowArrays:
 
 
 def build_time_splits(df: pd.DataFrame, train_ratio: float = 0.7, val_ratio: float = 0.15) -> TimeSplits:
+    """按时间顺序切分数据集。
+
+    不使用随机切分，因为随机切分会让模型在训练阶段看到测试集附近的时间点，
+    对时间序列预测是不合理的数据泄漏。
+    """
     if not 0 < train_ratio < 1:
         raise ValueError("train_ratio must be between 0 and 1")
     if not 0 < val_ratio < 1:
@@ -51,6 +78,15 @@ def make_window_arrays(
     lookback: int,
     horizon: int,
 ) -> WindowArrays:
+    """把连续时间序列转换成监督学习样本。
+
+    对于起点 start：
+    - history 使用 [start, start + lookback)。
+    - target/weather/time 使用 [start + lookback, start + lookback + horizon)。
+    - direct 使用 history 的最后一个时刻，即 start + lookback - 1。
+
+    这样保证目标窗口的任何目标值都不会进入历史输入。
+    """
     if lookback <= 0 or horizon <= 0:
         raise ValueError("lookback and horizon must be positive")
     required = set(columns.history + columns.weather + columns.time + columns.direct + [columns.target, "DATE_TIME"])
@@ -74,9 +110,12 @@ def make_window_arrays(
     for start in range(n_samples):
         hist_end = start + lookback
         target_end = hist_end + horizon
+        # 历史序列输入给 CNN 分支，保留二维结构 [time, feature]。
         history.append(ordered.iloc[start:hist_end][columns.history].to_numpy(dtype=np.float32))
+        # 天气和时间特征按照预测窗口展开，表示未来每个 horizon 的条件输入。
         weather.append(ordered.iloc[hist_end:target_end][columns.weather].to_numpy(dtype=np.float32))
         time_features.append(ordered.iloc[hist_end:target_end][columns.time].to_numpy(dtype=np.float32))
+        # direct 分支只取预测点前一时刻，模拟论文中的“直接输入部分”。
         direct.append(ordered.iloc[hist_end - 1][columns.direct].to_numpy(dtype=np.float32))
         target.append(ordered.iloc[hist_end:target_end][columns.target].to_numpy(dtype=np.float32))
         target_times.append(ordered.iloc[hist_end:target_end]["DATE_TIME"].to_numpy())
@@ -94,6 +133,11 @@ def make_window_arrays(
 
 
 def fit_scalers(train: WindowArrays) -> dict[str, StandardScaler]:
+    """在训练窗口上拟合所有标准化器。
+
+    每类输入的 shape 不同，因此分别拟合 scaler。序列类输入先展平时间维，
+    让 scaler 学到每个特征列的全局均值和标准差。
+    """
     scalers = {
         "history": StandardScaler(),
         "weather": StandardScaler(),
@@ -110,6 +154,7 @@ def fit_scalers(train: WindowArrays) -> dict[str, StandardScaler]:
 
 
 def transform_windows(windows: WindowArrays, scalers: dict[str, StandardScaler]) -> WindowArrays:
+    """使用训练集 scaler 标准化窗口数组。"""
     history = scalers["history"].transform(windows.history.reshape(-1, windows.history.shape[-1])).reshape(windows.history.shape)
     weather = scalers["weather"].transform(windows.weather.reshape(-1, windows.weather.shape[-1])).reshape(windows.weather.shape)
     time_features = scalers["time"].transform(windows.time.reshape(-1, windows.time.shape[-1])).reshape(windows.time.shape)
@@ -127,6 +172,12 @@ def transform_windows(windows: WindowArrays, scalers: dict[str, StandardScaler])
 
 
 class PVWindowDataset:
+    """把 WindowArrays 包装成 PyTorch Dataset。
+
+    这里延迟导入 torch，是为了让没有安装 PyTorch 的环境仍能运行数据处理
+    和指标相关测试。
+    """
+
     def __init__(self, arrays: WindowArrays):
         try:
             import torch
@@ -136,9 +187,11 @@ class PVWindowDataset:
         self.arrays = arrays
 
     def __len__(self) -> int:
+        """返回样本窗口数量。"""
         return len(self.arrays.target)
 
     def __getitem__(self, idx: int):
+        """返回一个训练样本，键名与模型 forward 中读取的键名一致。"""
         torch = self.torch
         return {
             "history": torch.from_numpy(self.arrays.history[idx]),

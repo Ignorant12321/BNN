@@ -1,3 +1,5 @@
+"""数据读取与电站级聚合测试。"""
+
 from pathlib import Path
 
 import pandas as pd
@@ -6,6 +8,7 @@ from src.data import load_generation_data, load_weather_data, prepare_plant_data
 
 
 def test_load_generation_data_parses_day_first_timestamp(tmp_path: Path):
+    """发电数据时间戳必须按日-月-年解析。"""
     path = tmp_path / "generation.csv"
     path.write_text(
         "DATE_TIME,PLANT_ID,SOURCE_KEY,DC_POWER,AC_POWER,DAILY_YIELD,TOTAL_YIELD\n"
@@ -20,6 +23,7 @@ def test_load_generation_data_parses_day_first_timestamp(tmp_path: Path):
 
 
 def test_prepare_plant_dataframe_aggregates_inverters_and_merges_weather(tmp_path: Path):
+    """同一时刻多个逆变器应聚合为一行电站级记录，并合并气象变量。"""
     gen_path = tmp_path / "generation.csv"
     weather_path = tmp_path / "weather.csv"
     gen_path.write_text(

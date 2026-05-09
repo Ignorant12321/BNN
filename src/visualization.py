@@ -1,3 +1,9 @@
+"""实验图表绘制。
+
+这些图会自动保存到每次实验的 `figures/` 目录，用于论文结果展示：
+loss 曲线、预测区间、不同预测步长误差、区间覆盖率/宽度以及校准曲线。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,6 +15,7 @@ from src.metrics import horizon_metrics, pinaw, picp
 
 
 def plot_loss_curve(train_losses: list[float], val_losses: list[float], path: str | Path) -> None:
+    """绘制训练集和验证集 loss 曲线。"""
     plt.figure(figsize=(7, 4))
     plt.plot(train_losses, label="train")
     plt.plot(val_losses, label="val")
@@ -28,6 +35,10 @@ def plot_prediction_interval(
     path: str | Path,
     max_points: int = 160,
 ) -> None:
+    """绘制真实值、预测均值和预测区间。
+
+    多步预测结果会先展平成一条序列，只展示前 max_points 个点，避免图像过密。
+    """
     y = y_true.reshape(-1)[:max_points]
     m = mean.reshape(-1)[:max_points]
     lo = lower.reshape(-1)[:max_points]
@@ -46,6 +57,7 @@ def plot_prediction_interval(
 
 
 def plot_horizon_rmse(y_true: np.ndarray, mean: np.ndarray, path: str | Path) -> None:
+    """绘制不同预测步长上的 RMSE。"""
     rows = horizon_metrics(y_true, mean)
     x = [r["horizon"] for r in rows]
     y = [r["rmse"] for r in rows]
@@ -59,6 +71,7 @@ def plot_horizon_rmse(y_true: np.ndarray, mean: np.ndarray, path: str | Path) ->
 
 
 def plot_picp_pinaw(y_true: np.ndarray, intervals: dict[str, tuple[np.ndarray, np.ndarray]], path: str | Path) -> None:
+    """绘制各置信区间的覆盖率和归一化宽度。"""
     labels = list(intervals)
     picps = [picp(y_true, intervals[k][0], intervals[k][1]) for k in labels]
     pinaws = [pinaw(y_true, intervals[k][0], intervals[k][1]) for k in labels]
@@ -75,6 +88,11 @@ def plot_picp_pinaw(y_true: np.ndarray, intervals: dict[str, tuple[np.ndarray, n
 
 
 def plot_calibration_curve(y_true: np.ndarray, samples: np.ndarray, path: str | Path) -> None:
+    """绘制概率校准曲线。
+
+    横轴是名义覆盖率，纵轴是实际覆盖率。曲线越接近对角线，说明模型给出的
+    不确定性越可信。
+    """
     levels = np.arange(0.1, 1.0, 0.1)
     observed = []
     for level in levels:

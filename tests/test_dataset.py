@@ -1,3 +1,5 @@
+"""滑动窗口与时间切分测试。"""
+
 import numpy as np
 import pandas as pd
 
@@ -6,6 +8,7 @@ from src.features import add_basic_features, split_feature_columns
 
 
 def _frame(n=40):
+    """构造一段规则 15 分钟光伏样例数据。"""
     ts = pd.date_range("2020-05-15", periods=n, freq="15min")
     df = pd.DataFrame(
         {
@@ -21,6 +24,7 @@ def _frame(n=40):
 
 
 def test_make_window_arrays_uses_past_history_and_future_targets():
+    """窗口构造应使用过去 lookback 步预测未来 horizon 步。"""
     df = _frame(30)
     columns = split_feature_columns()
 
@@ -35,6 +39,7 @@ def test_make_window_arrays_uses_past_history_and_future_targets():
 
 
 def test_build_time_splits_are_chronological():
+    """训练、验证、测试集必须保持严格时间顺序。"""
     df = _frame(100)
 
     splits = build_time_splits(df, train_ratio=0.6, val_ratio=0.2)

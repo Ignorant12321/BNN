@@ -1,9 +1,12 @@
+"""特征工程测试。"""
+
 import pandas as pd
 
 from src.features import add_basic_features, split_feature_columns
 
 
 def test_add_basic_features_adds_cyclical_time_and_daylight_flags():
+    """基础特征应包含周期时间编码和白天标记。"""
     df = pd.DataFrame(
         {
             "DATE_TIME": pd.to_datetime(["2020-05-15 00:00", "2020-05-15 12:00"]),
@@ -22,6 +25,7 @@ def test_add_basic_features_adds_cyclical_time_and_daylight_flags():
 
 
 def test_split_feature_columns_matches_model_inputs():
+    """特征分组应包含模型各分支需要的列。"""
     columns = split_feature_columns()
 
     assert "AC_POWER" in columns.history

@@ -1,9 +1,12 @@
+"""评价指标测试。"""
+
 import numpy as np
 
 from src.metrics import mae, pinaw, picp, rmse, smape
 
 
 def test_point_metrics_return_expected_values():
+    """MAE、RMSE、sMAPE 应返回稳定的数值。"""
     y = np.array([1.0, 2.0, 4.0])
     pred = np.array([1.0, 3.0, 2.0])
 
@@ -13,6 +16,7 @@ def test_point_metrics_return_expected_values():
 
 
 def test_interval_metrics_measure_coverage_and_width():
+    """PICP 衡量覆盖率，PINAW 衡量归一化区间宽度。"""
     y = np.array([1.0, 2.0, 3.0])
     lower = np.array([0.0, 1.5, 4.0])
     upper = np.array([2.0, 2.5, 5.0])

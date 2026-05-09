@@ -1,3 +1,19 @@
+"""训练主入口。
+
+运行方式：
+
+    python -m src.train --config configs/default.yaml
+
+完整流程包括：
+
+1. 读取配置并创建本次实验输出目录。
+2. 读取 CSV，聚合为电站级数据，并构造基础特征。
+3. 按时间顺序切分 train/val/test。
+4. 构造滑动窗口并用训练集 scaler 标准化。
+5. 训练 ImprovedBayesianPVNet。
+6. 在测试集上进行 MC 推理，生成指标、图像、预测 CSV 和模型权重。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -26,6 +42,7 @@ from src.visualization import (
 
 
 def main() -> None:
+    """命令行入口。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
     args = parser.parse_args()
@@ -37,16 +54,27 @@ def main() -> None:
 
 
 def run_training(config: dict) -> Path:
+    """执行一次完整训练实验。
+
+    参数:
+        config: 从 YAML 读取的配置字典。
+
+    返回:
+        本次实验的输出目录路径。
+    """
     import torch
     from torch.utils.data import DataLoader
 
+    # 固定随机种子，保证同一配置下的实验尽量可复现。
     set_seed(config["seed"])
     device = resolve_device(config["training"]["device"])
+    # 每次训练都会创建独立目录，避免覆盖历史实验结果。
     run_dir = create_run_dir(config["output_dir"], config["model"]["name"])
     logger = setup_logger(run_dir / "logs" / "train.log")
     save_config(config, run_dir / "config.yaml")
     logger.info("Using device: %s", device)
 
+    # 读取并预处理数据。这里得到的是电站级时间序列，而不是单个逆变器序列。
     df = load_plant_dataframe(
         config["data"]["generation_path"],
         config["data"]["weather_path"],
@@ -54,6 +82,7 @@ def run_training(config: dict) -> Path:
     )
     df = add_basic_features(df)
     columns = split_feature_columns()
+    # 先切分再构造窗口，避免训练窗口跨越到验证/测试时间段。
     splits = build_time_splits(df, config["data"]["train_ratio"], config["data"]["val_ratio"])
     lookback = config["data"]["lookback"]
     horizon = config["data"]["horizon"]
@@ -61,6 +90,7 @@ def run_training(config: dict) -> Path:
     raw_train = make_window_arrays(splits.train, columns, lookback, horizon)
     raw_val = make_window_arrays(splits.val, columns, lookback, horizon)
     raw_test = make_window_arrays(splits.test, columns, lookback, horizon)
+    # scaler 只在训练集 fit，这是防止数据泄漏的重要步骤。
     scalers = fit_scalers(raw_train)
     train_arrays = transform_windows(raw_train, scalers)
     val_arrays = transform_windows(raw_val, scalers)
@@ -70,6 +100,7 @@ def run_training(config: dict) -> Path:
     val_loader = DataLoader(PVWindowDataset(val_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
     test_loader = DataLoader(PVWindowDataset(test_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
 
+    # 根据特征分组自动设置输入维度；配置文件控制隐藏层规模和先验方差。
     model = ImprovedBayesianPVNet(
         history_features=len(columns.history),
         weather_features=len(columns.weather),
@@ -82,6 +113,7 @@ def run_training(config: dict) -> Path:
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"], weight_decay=config["training"]["weight_decay"])
 
+    # 记录最优验证损失，用于保存 best_model.pt 和 early stopping。
     best_val = float("inf")
     train_losses: list[float] = []
     val_losses: list[float] = []
@@ -105,20 +137,24 @@ def run_training(config: dict) -> Path:
                 logger.info("early stopping at epoch %d", epoch)
                 break
 
+    # 使用验证集上最好的权重进行测试集 MC 推理。
     checkpoint = torch.load(run_dir / "checkpoints" / "best_model.pt", map_location=device)
     model.load_state_dict(checkpoint["model_state"])
     pred = mc_predict(model, test_loader, device, mc_samples=config["prediction"]["mc_samples"])
+    # 模型是在标准化空间训练的，保存结果前需要恢复到真实功率尺度。
     target = _inverse_target(pred["target"], scalers["target"])
     mean = _inverse_target(pred["mean"], scalers["target"])
     std = pred["std"] * float(scalers["target"].scale_[0])
     samples = np.stack([_inverse_target(s, scalers["target"]) for s in pred["samples"]], axis=0)
 
     metrics = evaluate_predictions(target, mean, std, samples)
+    # 保存表格类结果。
     save_json(metrics, run_dir / "metrics" / "metrics.json")
     pd.DataFrame(horizon_metrics(target, mean)).to_csv(run_dir / "metrics" / "point_metrics.csv", index=False)
     pd.DataFrame([metrics]).to_csv(run_dir / "metrics" / "probabilistic_metrics.csv", index=False)
     _save_predictions(run_dir, raw_test.target_times, target, mean, std, samples)
     _save_artifacts(run_dir, columns, scalers, splits)
+    # 保存论文中常用的可视化图。
     plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
     lower90, upper90 = interval_from_samples(samples, 0.90)
     lower95, upper95 = interval_from_samples(samples, 0.95)
@@ -132,13 +168,16 @@ def run_training(config: dict) -> Path:
 
 
 def _train_epoch(model, loader, optimizer, device, beta: float) -> float:
+    """训练一个 epoch，并返回平均 loss。"""
     model.train()
     losses = []
     for batch in loader:
+        # DataLoader 返回的每个 batch 是一个字典，所有张量都搬到同一设备。
         batch = {k: v.to(device) for k, v in batch.items()}
         target = batch.pop("target")
         optimizer.zero_grad(set_to_none=True)
         mean, log_var = model(batch)
+        # ELBO = Gaussian NLL + beta * KL。KL 来自所有贝叶斯层。
         loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
         loss.backward()
         optimizer.step()
@@ -147,6 +186,7 @@ def _train_epoch(model, loader, optimizer, device, beta: float) -> float:
 
 
 def _eval_loss(model, loader, device, beta: float) -> float:
+    """在验证集上计算平均 loss，不更新参数。"""
     import torch
 
     model.eval()
@@ -162,10 +202,12 @@ def _eval_loss(model, loader, device, beta: float) -> float:
 
 
 def _inverse_target(values: np.ndarray, scaler) -> np.ndarray:
+    """把标准化后的目标值恢复到原始 AC_POWER 尺度。"""
     return scaler.inverse_transform(values.reshape(-1, 1)).reshape(values.shape)
 
 
 def _save_predictions(run_dir: Path, target_times: np.ndarray, target: np.ndarray, mean: np.ndarray, std: np.ndarray, samples: np.ndarray) -> None:
+    """保存测试集逐样本、逐 horizon 的预测结果。"""
     rows = []
     for i in range(target.shape[0]):
         for h in range(target.shape[1]):
@@ -184,6 +226,7 @@ def _save_predictions(run_dir: Path, target_times: np.ndarray, target: np.ndarra
 
 
 def _save_artifacts(run_dir: Path, columns, scalers, splits) -> None:
+    """保存复现实验所需的工件。"""
     save_pickle(scalers["history"], run_dir / "artifacts" / "scaler_x.pkl")
     save_pickle(scalers["target"], run_dir / "artifacts" / "scaler_y.pkl")
     save_pickle(scalers, run_dir / "artifacts" / "all_scalers.pkl")
