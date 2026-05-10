@@ -9,7 +9,7 @@ data:
   val_ratio: 0.15
   lookback: 32
   horizon: 16
-  use_future_weather: false
+  use_future_weather: true
 
 model:
   name: improved_bnn

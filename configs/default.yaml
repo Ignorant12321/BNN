@@ -1,6 +1,5 @@
 seed: 42
 output_dir: outputs
-
 data:
   generation_path: dataset/Plant_1_Generation_Data.csv
   weather_path: dataset/Plant_1_Weather_Sensor_Data.csv
@@ -9,33 +8,27 @@ data:
   val_ratio: 0.15
   lookback: 32
   horizon: 16
-  use_future_weather: false
-
+  use_future_weather: true
 model:
   name: improved_bnn
   hidden_dim: 256
-  branch_dim: 64
+  branch_dim: 32
   prior_sigma: 1.0
-
 training:
   device: auto
-  epochs: 80
+  epochs: 250
   batch_size: 64
-  lr: 0.00019544293665253097
+  lr: 0.0015414419590646007
   weight_decay: 0.0001
-  kl_beta: 1.2114960587728605e-05
-  patience: 12
-
+  kl_beta: 9.839179320060641e-05
+  patience: 20
 prediction:
-  mc_samples: 50
+  mc_samples: 30
   plot:
-    # 不填写时间段时，自动从测试集中第一个有明显出力的白天点开始画图。
     prefer_daylight: true
     daylight_threshold: 1.0
     max_points: 160
-    # 如需指定展示时间段，取消注释并填写测试集内的时间。
-    # start_time: "2020-06-13 08:00:00"
-    # end_time: "2020-06-13 12:00:00"
-
+tuning:
+  n_trials: 20
 evaluation:
   run_test: true
