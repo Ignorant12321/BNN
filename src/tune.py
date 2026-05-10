@@ -41,8 +41,12 @@ def main() -> None:
         return load_objective_metric(run_dir, metric="rmse")
 
     # direction=minimize 表示 RMSE 越小越好。
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=base["tuning"]["n_trials"])
+    study = create_tuning_study(optuna, base)
+    n_trials = count_remaining_trials(study, target_n_trials=base["tuning"]["n_trials"])
+    if n_trials > 0:
+        study.optimize(objective, n_trials=n_trials)
+    else:
+        print(f"Study already has {len(study.trials)} trials; skipping optimization.")
     print(study.best_params)
     export_dir = export_study_results(study, base, run_name=run_name)
     print(f"Tuning results exported to: {export_dir}")
@@ -60,6 +64,43 @@ def prepare_trial_config(base_config: dict, platform: str = sys.platform, tuning
         config["training"]["num_workers"] = 0
         config["training"]["persistent_workers"] = False
     return config
+
+
+def create_tuning_study(optuna_module, base_config: dict):
+    """创建可持久化的 Optuna study，以支持中断后继续调参。"""
+    tuning_config = base_config.get("tuning", {})
+    storage = tuning_config.get("storage")
+    if storage:
+        ensure_sqlite_storage_parent(storage)
+
+    kwargs = {
+        "direction": tuning_config.get("direction", "minimize"),
+    }
+    if tuning_config.get("study_name") is not None:
+        kwargs["study_name"] = tuning_config["study_name"]
+    if storage:
+        kwargs["storage"] = storage
+        kwargs["load_if_exists"] = tuning_config.get("load_if_exists", True)
+
+    return optuna_module.create_study(**kwargs)
+
+
+def ensure_sqlite_storage_parent(storage: str) -> None:
+    """为本地 SQLite storage 创建父目录。"""
+    prefix = "sqlite:///"
+    if not storage.startswith(prefix):
+        return
+
+    db_path = storage[len(prefix) :]
+    if db_path == ":memory:":
+        return
+
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def count_remaining_trials(study, target_n_trials: int) -> int:
+    """计算续跑时还需要补充的 trial 数量。"""
+    return max(0, target_n_trials - len(study.trials))
 
 
 def merge_best_params(base_config: dict, best_params: dict) -> dict:

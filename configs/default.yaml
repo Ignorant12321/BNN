@@ -28,7 +28,7 @@ training:
   kl_beta: 1.7099712671569545e-05
   patience: 30
 prediction:
-  mc_samples: 30
+  mc_samples: 50
   plot:
     prefer_daylight: true
     daylight_threshold: 1.0

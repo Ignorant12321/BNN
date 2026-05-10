@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -73,6 +74,7 @@ def run_training(config: dict) -> Path:
     run_note = config.get("experiment", {}).get("note")
     run_dir = create_run_dir(config["output_dir"], config["model"]["name"], note=run_note)
     logger = setup_logger(run_dir / "logs" / "train.log")
+    training_started_at = time.perf_counter()
     save_config(config, run_dir / "config.yaml")
     logger.info("Device status: %s", describe_device(device))
 
@@ -116,6 +118,8 @@ def run_training(config: dict) -> Path:
 
     # 记录最优验证损失，用于保存 best_model.pt 和 early stopping。
     best_val = float("inf")
+    best_epoch = 0
+    early_stop_epoch: int | None = None
     train_losses: list[float] = []
     val_losses: list[float] = []
     patience = config["training"]["patience"]
@@ -146,11 +150,13 @@ def run_training(config: dict) -> Path:
         torch.save({"model_state": model.state_dict(), "config": config}, run_dir / "checkpoints" / "last_model.pt")
         if val_loss < best_val:
             best_val = val_loss
+            best_epoch = epoch
             stale_epochs = 0
             torch.save({"model_state": model.state_dict(), "config": config}, run_dir / "checkpoints" / "best_model.pt")
         else:
             stale_epochs += 1
             if stale_epochs >= patience:
+                early_stop_epoch = epoch
                 logger.info("early stopping at epoch %d", epoch)
                 break
 
@@ -161,14 +167,111 @@ def run_training(config: dict) -> Path:
     # 保存表格类结果。
     plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
     save_artifacts(run_dir, columns, scalers, splits)
-    evaluate_loaded_model(model, config, scalers, splits, device, "val", run_dir)
+    evaluation_results = [evaluate_loaded_model(model, config, scalers, splits, device, "val", run_dir)]
     if not config.get("evaluation", {}).get("run_test", True):
         logger.info("validation-only run complete: %s", run_dir)
+        _log_training_summary(
+            logger,
+            run_dir=run_dir,
+            elapsed_seconds=time.perf_counter() - training_started_at,
+            completed_epochs=len(train_losses),
+            requested_epochs=int(config["training"]["epochs"]),
+            best_epoch=best_epoch,
+            best_val=best_val,
+            early_stop_epoch=early_stop_epoch,
+            train_losses=train_losses,
+            val_losses=val_losses,
+            evaluation_results=evaluation_results,
+        )
         return run_dir
 
-    evaluate_loaded_model(model, config, scalers, splits, device, "test", run_dir)
+    evaluation_results.append(evaluate_loaded_model(model, config, scalers, splits, device, "test", run_dir))
     logger.info("run complete: %s", run_dir)
+    _log_training_summary(
+        logger,
+        run_dir=run_dir,
+        elapsed_seconds=time.perf_counter() - training_started_at,
+        completed_epochs=len(train_losses),
+        requested_epochs=int(config["training"]["epochs"]),
+        best_epoch=best_epoch,
+        best_val=best_val,
+        early_stop_epoch=early_stop_epoch,
+        train_losses=train_losses,
+        val_losses=val_losses,
+        evaluation_results=evaluation_results,
+    )
     return run_dir
+
+
+def _log_training_summary(logger, **summary_kwargs) -> None:
+    """把训练结束摘要逐行追加到 train.log。"""
+    for line in _build_training_summary_lines(**summary_kwargs):
+        logger.info(line)
+
+
+def _build_training_summary_lines(
+    *,
+    run_dir: Path,
+    elapsed_seconds: float,
+    completed_epochs: int,
+    requested_epochs: int,
+    best_epoch: int,
+    best_val: float,
+    early_stop_epoch: int | None,
+    train_losses: list[float],
+    val_losses: list[float],
+    evaluation_results,
+) -> list[str]:
+    """生成 train.log 结尾的耗时、训练状态和指标摘要。"""
+    lines = [
+        "Training Summary",
+        f"elapsed_time={_format_duration(elapsed_seconds)} elapsed_seconds={elapsed_seconds:.1f}",
+        (
+            f"completed_epochs={completed_epochs}/{requested_epochs} "
+            f"best_epoch={best_epoch} best_val_loss={best_val:.6f} "
+            f"early_stopping_epoch={early_stop_epoch if early_stop_epoch is not None else 'none'}"
+        ),
+    ]
+    if train_losses:
+        lines.append(f"final_train_loss={train_losses[-1]:.6f}")
+    if val_losses:
+        lines.append(f"final_val_loss={val_losses[-1]:.6f}")
+    for result in evaluation_results:
+        label = "validation" if result.split == "val" else result.split
+        metrics_path = _relative_to_run_dir(result.outputs.metrics, run_dir)
+        metric_text = _format_core_metrics(result.metrics)
+        lines.append(f"{label}_metrics={metrics_path} {metric_text}".rstrip())
+    return lines
+
+
+def _format_duration(seconds: float) -> str:
+    """把秒数格式化为 HH:MM:SS。"""
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _relative_to_run_dir(path: Path, run_dir: Path) -> str:
+    """优先显示相对 run_dir 的产物路径，日志更便于阅读。"""
+    try:
+        return str(Path(path).relative_to(run_dir)).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def _format_core_metrics(metrics: dict[str, float]) -> str:
+    """按固定顺序输出常用评估指标，缺失时自动跳过。"""
+    preferred = ["rmse", "mae", "smape", "nrmse", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
+    parts = []
+    for key in preferred:
+        if key in metrics:
+            parts.append(f"{key}={float(metrics[key]):.6f}")
+    for key in sorted(set(metrics) - set(preferred)):
+        value = metrics[key]
+        if isinstance(value, int | float | np.number):
+            parts.append(f"{key}={float(value):.6f}")
+    return " ".join(parts)
 
 
 def _build_loader_kwargs(config: dict, device, shuffle: bool, platform: str | None = None) -> dict:

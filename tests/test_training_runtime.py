@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.train import _amp_enabled, _build_loader_kwargs
+from src.train import _amp_enabled, _build_loader_kwargs, _build_training_summary_lines
 
 
 def test_build_loader_kwargs_enables_cuda_input_pipeline_options() -> None:
@@ -70,3 +70,41 @@ def test_amp_enabled_only_on_cuda_when_configured() -> None:
     assert _amp_enabled({"training": {"amp": True}}, SimpleNamespace(type="cuda")) is True
     assert _amp_enabled({"training": {"amp": True}}, SimpleNamespace(type="cpu")) is False
     assert _amp_enabled({"training": {"amp": False}}, SimpleNamespace(type="cuda")) is False
+
+
+def test_build_training_summary_lines_includes_duration_status_and_metrics(tmp_path) -> None:
+    """训练日志结尾应包含耗时、训练总结和核心评估指标。"""
+    val_result = SimpleNamespace(
+        split="val",
+        metrics={"rmse": 10.123456, "mae": 5.5, "picp_90": 0.91},
+        outputs=SimpleNamespace(metrics=tmp_path / "metrics" / "validation_metrics.json"),
+    )
+    test_result = SimpleNamespace(
+        split="test",
+        metrics={"rmse": 11.2, "mae": 6.0, "picp_90": 0.88},
+        outputs=SimpleNamespace(metrics=tmp_path / "metrics" / "metrics.json"),
+    )
+
+    lines = _build_training_summary_lines(
+        run_dir=tmp_path,
+        elapsed_seconds=3723.4,
+        completed_epochs=12,
+        requested_epochs=20,
+        best_epoch=9,
+        best_val=0.1234567,
+        early_stop_epoch=12,
+        train_losses=[0.9, 0.4],
+        val_losses=[0.8, 0.5],
+        evaluation_results=[val_result, test_result],
+    )
+
+    text = "\n".join(lines)
+    assert "Training Summary" in text
+    assert "elapsed_time=01:02:03" in text
+    assert "completed_epochs=12/20" in text
+    assert "best_epoch=9" in text
+    assert "best_val_loss=0.123457" in text
+    assert "early_stopping_epoch=12" in text
+    assert "final_train_loss=0.400000" in text
+    assert "validation_metrics=metrics/validation_metrics.json rmse=10.123456 mae=5.500000 picp_90=0.910000" in text
+    assert "test_metrics=metrics/metrics.json rmse=11.200000 mae=6.000000 picp_90=0.880000" in text

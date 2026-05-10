@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import yaml
 
+from src import tune
 from src.tune import export_study_results, load_objective_metric, merge_best_params, prepare_trial_config
 
 
@@ -46,6 +47,51 @@ def test_prepare_trial_config_disables_workers_on_windows():
 
     assert config["training"]["num_workers"] == 0
     assert config["training"]["persistent_workers"] is False
+
+
+def test_create_tuning_study_uses_configured_persistent_storage(tmp_path):
+    """Optuna study should use configured storage so interrupted tuning can resume."""
+    assert hasattr(tune, "create_tuning_study"), "create_tuning_study helper is missing"
+
+    calls = []
+
+    class FakeOptuna:
+        @staticmethod
+        def create_study(**kwargs):
+            calls.append(kwargs)
+            return "study"
+
+    base_config = {
+        "output_dir": str(tmp_path),
+        "tuning": {
+            "study_name": "solar-bnn",
+            "storage": f"sqlite:///{tmp_path / 'optuna.db'}",
+            "load_if_exists": True,
+        },
+    }
+
+    study = tune.create_tuning_study(FakeOptuna, base_config)
+
+    assert study == "study"
+    assert calls == [
+        {
+            "direction": "minimize",
+            "study_name": "solar-bnn",
+            "storage": f"sqlite:///{tmp_path / 'optuna.db'}",
+            "load_if_exists": True,
+        }
+    ]
+
+
+def test_count_remaining_trials_treats_n_trials_as_total_target():
+    """Resumed tuning should add only the trials needed to reach the configured total."""
+    assert hasattr(tune, "count_remaining_trials"), "count_remaining_trials helper is missing"
+
+    class FakeStudy:
+        trials = [object(), object(), object()]
+
+    assert tune.count_remaining_trials(FakeStudy(), target_n_trials=5) == 2
+    assert tune.count_remaining_trials(FakeStudy(), target_n_trials=3) == 0
 
 
 def test_merge_best_params_updates_model_and_training_values():

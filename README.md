@@ -204,6 +204,24 @@ python -m src.tune
 一次调参会话会写入 `outputs/tuning/YYYYMMDD-HHMMSS/`。其中每个 trial 的训练产物位于
 `outputs/tuning/YYYYMMDD-HHMMSS/improved_bnn/<trial时间戳>/`，调参汇总文件
 `best_params.json`、`trials.csv`、`best_config.yaml` 位于同一个调参会话目录根部。
+`configs/tuning.yaml` 默认启用 SQLite 持久化 study：`outputs/tuning/optuna.db`。
+如果调参进程中断，再次运行 `python -m src.tune` 会通过同名 study 继续搜索已完成 trial 之后的配置。
+此时 `tuning.n_trials` 表示目标总 trial 数，而不是每次重启追加的 trial 数。
+
+把最新调参结果迁移到正式训练配置：
+
+```bash
+python -m src.apply_tuning
+```
+
+该命令默认读取最新 `outputs/tuning/*/best_params.json`，只迁移 Optuna 实际搜索的
+`model.hidden_dim`、`model.branch_dim`、`training.lr` 和 `training.kl_beta`，并打印每个字段的
+旧值、新值和是否发生变化。也可以显式指定来源或先预览：
+
+```bash
+python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json
+python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json --dry-run
+```
 
 ## 输出
 
