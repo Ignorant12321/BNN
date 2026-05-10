@@ -31,12 +31,7 @@ def main() -> None:
     def objective(trial):
         """单个 trial 的目标函数。"""
         config = prepare_trial_config(base, tuning_run_name=run_name)
-        # 模型容量相关参数。
-        config["model"]["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
-        config["model"]["branch_dim"] = trial.suggest_categorical("branch_dim", [32, 64, 128])
-        # 优化器和贝叶斯 KL 权重相关参数。
-        config["training"]["lr"] = trial.suggest_float("lr", 1e-4, 3e-3, log=True)
-        config["training"]["kl_beta"] = trial.suggest_float("kl_beta", 1e-5, 1e-2, log=True)
+        apply_trial_suggestions(config, trial)
         run_dir = run_training(config)
         return load_objective_metric(run_dir, metric="rmse")
 
@@ -101,6 +96,34 @@ def ensure_sqlite_storage_parent(storage: str) -> None:
 def count_remaining_trials(study, target_n_trials: int) -> int:
     """计算续跑时还需要补充的 trial 数量。"""
     return max(0, target_n_trials - len(study.trials))
+
+
+def apply_trial_suggestions(config: dict, trial) -> None:
+    """根据 tuning.search_space 采样超参数并写回 trial 配置。"""
+    search_space = config.get("tuning", {}).get("search_space", {})
+    hidden_dim_choices = search_space.get("hidden_dim", [64, 128, 256])
+    branch_dim_choices = search_space.get("branch_dim", [32, 64, 128])
+    lr_space = search_space.get("lr", {"low": 1e-4, "high": 3e-3, "log": True})
+    kl_beta_space = search_space.get("kl_beta", {"low": 1e-5, "high": 1e-2, "log": True})
+
+    config.setdefault("model", {})
+    config.setdefault("training", {})
+    # 模型容量相关参数。
+    config["model"]["hidden_dim"] = trial.suggest_categorical("hidden_dim", hidden_dim_choices)
+    config["model"]["branch_dim"] = trial.suggest_categorical("branch_dim", branch_dim_choices)
+    # 优化器和贝叶斯 KL 权重相关参数。
+    config["training"]["lr"] = trial.suggest_float(
+        "lr",
+        lr_space["low"],
+        lr_space["high"],
+        log=lr_space.get("log", True),
+    )
+    config["training"]["kl_beta"] = trial.suggest_float(
+        "kl_beta",
+        kl_beta_space["low"],
+        kl_beta_space["high"],
+        log=kl_beta_space.get("log", True),
+    )
 
 
 def merge_best_params(base_config: dict, best_params: dict) -> dict:

@@ -16,7 +16,7 @@ model:
   prior_sigma: 1.0
 training:
   device: auto
-  epochs: 350
+  epochs: 400
   batch_size: 128
   num_workers: 0
   pin_memory: true
@@ -35,7 +35,5 @@ prediction:
     max_points: 160
     start_time: "2020-06-13 10:00:00"
     end_time: "2020-06-13 14:00:00"
-tuning:
-  n_trials: 20
 evaluation:
   run_test: true

@@ -143,17 +143,91 @@ loss = Gaussian NLL(mean, log_var, target) + beta * KL / num_batches
 | 文件 | 用途 |
 | --- | --- |
 | `configs/default.yaml` | 正式训练 |
-| `configs/tuning.yaml` | Optuna 调参 |
+| `configs/tuning.yaml` | Optuna 调参；它是一份独立调参配置，不会自动继承 `default.yaml` |
 | `configs/compare.yaml` | 模型对比实验 |
 
-关键数据配置：
+`default.yaml` 和 `tuning.yaml` 的大多数字段含义相同。区别是：`default.yaml` 面向最终训练和测试集评估；`tuning.yaml` 面向 Optuna 搜索，每个 trial 会复制这份配置，然后用 `tuning.search_space` 中采样到的值覆盖部分模型和训练字段。
 
-```yaml
-data:
-  processed_dir: data/processed
-  lookback: 16
-  horizon: 16
-```
+通用字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `seed` | 随机种子，用于提高实验可复现性 |
+| `output_dir` | 输出根目录；正式训练默认写入 `outputs/improved_bnn/时间戳/` |
+
+`data` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `generation_path` | 发电数据 CSV 路径 |
+| `weather_path` | 气象数据 CSV 路径 |
+| `processed_dir` | `prepare_data` 写出的 train/val/test 中间文件目录；训练时若存在这些文件会优先读取 |
+| `fill_missing` | 是否补齐 15 分钟规则时间轴并插值缺失值 |
+| `train_ratio` | 按时间顺序切出的训练集比例 |
+| `val_ratio` | 按时间顺序切出的验证集比例；剩余部分为测试集 |
+| `lookback` | 历史输入窗口长度。当前 `16` 表示过去 4 小时 |
+| `horizon` | 预测窗口长度。当前 `16` 表示未来 4 小时 |
+
+`model` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `name` | 模型名称；当前主流程使用 `improved_bnn` |
+| `hidden_dim` | 贝叶斯融合层的隐藏维度 |
+| `branch_dim` | history/weather 分支编码后的维度 |
+| `prior_sigma` | 贝叶斯线性层权重先验分布的标准差 |
+
+`training` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `device` | 训练设备，`auto` 会优先使用 CUDA，否则使用 CPU |
+| `epochs` | 最多训练轮数；实际可能被 early stopping 提前停止 |
+| `batch_size` | DataLoader batch 大小 |
+| `num_workers` | DataLoader 子进程数；Windows + CUDA 下调参会强制改为 `0` |
+| `pin_memory` | CUDA 训练时是否启用 pinned memory 加速数据搬运 |
+| `persistent_workers` | `num_workers > 0` 时是否保持 DataLoader worker 常驻 |
+| `amp` | CUDA 上是否启用自动混合精度 |
+| `cudnn_benchmark` | CUDA 上是否允许 cuDNN 为固定输入形状选择更快算法 |
+| `lr` | AdamW 学习率；在调参 trial 中会被 `tuning.search_space.lr` 的采样值覆盖 |
+| `weight_decay` | AdamW 权重衰减 |
+| `kl_beta` | BNN KL 散度项权重；在调参 trial 中会被 `tuning.search_space.kl_beta` 的采样值覆盖 |
+| `patience` | 验证损失连续多少轮未改善后 early stopping |
+
+`prediction` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `mc_samples` | 推理时 Monte Carlo 前向传播次数；越大不确定性估计越稳定，但评估越慢 |
+| `plot.prefer_daylight` | 未指定固定时间段时，是否优先选择白天出力片段画预测区间 |
+| `plot.daylight_threshold` | 判断白天片段的真实功率阈值 |
+| `plot.max_points` | 预测区间图最多绘制多少个点 |
+| `plot.start_time` / `plot.end_time` | 指定预测区间图展示的时间段 |
+
+`evaluation` 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `run_test` | 是否在训练结束后评估测试集。正式训练建议为 `true`；调参时由代码强制设为 `false`，避免用测试集选模型 |
+
+`tuning` 字段仅用于 `configs/tuning.yaml`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `study_name` | Optuna study 名称；同名 study 会复用历史 trial |
+| `storage` | Optuna 持久化存储位置，例如 `sqlite:///outputs/tuning/optuna.db` |
+| `load_if_exists` | storage 中已有同名 study 时是否继续加载 |
+| `n_trials` | 目标总 trial 数，不是每次启动追加的数量 |
+| `search_space.hidden_dim` | `model.hidden_dim` 的候选列表 |
+| `search_space.branch_dim` | `model.branch_dim` 的候选列表 |
+| `search_space.lr.low/high/log` | 学习率搜索下界、上界以及是否按对数尺度采样 |
+| `search_space.kl_beta.low/high/log` | KL 权重搜索下界、上界以及是否按对数尺度采样 |
+
+使用配置时建议注意三点：
+
+1. 改了 `default.yaml` 不会自动同步到 `tuning.yaml`，两份配置需要按实验目的分别维护。
+2. 调参时 `model.hidden_dim`、`model.branch_dim`、`training.lr`、`training.kl_beta` 会被 `tuning.search_space` 覆盖；它们保留在 `tuning.yaml` 里主要是为了让这份文件仍可作为普通训练配置使用。
+3. 最终论文或报告结果应来自测试集 `metrics/metrics.json`；调参和模型选择应看验证集 `metrics/validation_metrics.json`。
 
 ## 运行
 
@@ -168,6 +242,14 @@ pip install -r requirements.txt
 ```bash
 pytest -q
 ```
+
+推荐工作流：
+
+1. 先运行 `prepare_data` 固化清洗结果和时间切分。
+2. 用 `configs/tuning.yaml` 运行 Optuna 调参；调参只看验证集，不使用测试集选模型。
+3. 用 `src.apply_tuning` 将最佳 `hidden_dim`、`branch_dim`、`lr`、`kl_beta` 迁移到 `configs/default.yaml`。
+4. 用 `configs/default.yaml` 做正式训练，并评估测试集。
+5. 写报告或论文时引用正式训练输出中的测试集指标。
 
 第一次运行建议先准备数据，再训练：
 
@@ -207,6 +289,9 @@ python -m src.tune
 `configs/tuning.yaml` 默认启用 SQLite 持久化 study：`outputs/tuning/optuna.db`。
 如果调参进程中断，再次运行 `python -m src.tune` 会通过同名 study 继续搜索已完成 trial 之后的配置。
 此时 `tuning.n_trials` 表示目标总 trial 数，而不是每次重启追加的 trial 数。
+Optuna 的搜索范围配置在 `configs/tuning.yaml` 的 `tuning.search_space` 中；例如
+`lr.low`/`lr.high` 控制学习率范围，`kl_beta.low`/`kl_beta.high` 控制 BNN 的 KL 权重范围。
+`training.epochs` 和 `training.patience` 则控制每个 trial 最多训练多少轮以及 early stopping 的耐心值。
 
 把最新调参结果迁移到正式训练配置：
 

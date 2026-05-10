@@ -19,7 +19,7 @@ model:
 
 training:
   device: auto
-  epochs: 100
+  epochs: 150
   batch_size: 128
   num_workers: 0
   pin_memory: true
@@ -29,7 +29,7 @@ training:
   lr: 0.0018259913257430906
   weight_decay: 0.0001
   kl_beta: 1.7099712671569545e-05
-  patience: 10
+  patience: 15
 
 prediction:
   mc_samples: 30
@@ -44,7 +44,15 @@ tuning:
   study_name: improved_bnn_tuning
   storage: sqlite:///outputs/tuning/optuna.db
   load_if_exists: true
-  n_trials: 30
-
-evaluation:
-  run_test: true
+  n_trials: 45
+  search_space:
+    hidden_dim: [128, 256]
+    branch_dim: [32, 64, 128]
+    lr:
+      low: 5.0e-4
+      high: 2.5e-3
+      log: true
+    kl_beta:
+      low: 1.0e-5
+      high: 3.0e-4
+      log: true

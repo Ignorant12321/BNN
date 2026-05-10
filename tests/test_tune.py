@@ -8,7 +8,7 @@ import pandas as pd
 import yaml
 
 from src import tune
-from src.tune import export_study_results, load_objective_metric, merge_best_params, prepare_trial_config
+from src.tune import apply_trial_suggestions, export_study_results, load_objective_metric, merge_best_params, prepare_trial_config
 
 
 def test_load_objective_metric_reads_validation_metrics(tmp_path):
@@ -92,6 +92,52 @@ def test_count_remaining_trials_treats_n_trials_as_total_target():
 
     assert tune.count_remaining_trials(FakeStudy(), target_n_trials=5) == 2
     assert tune.count_remaining_trials(FakeStudy(), target_n_trials=3) == 0
+
+
+def test_apply_trial_suggestions_uses_configured_search_space():
+    """Optuna 搜索范围应来自 tuning.yaml，而不是硬编码在调参入口中。"""
+
+    class FakeTrial:
+        def __init__(self):
+            self.categorical_calls = []
+            self.float_calls = []
+
+        def suggest_categorical(self, name, choices):
+            self.categorical_calls.append((name, choices))
+            return choices[-1]
+
+        def suggest_float(self, name, low, high, log=False):
+            self.float_calls.append((name, low, high, log))
+            return high
+
+    config = {
+        "model": {},
+        "training": {},
+        "tuning": {
+            "search_space": {
+                "hidden_dim": [128, 256],
+                "branch_dim": [32, 64, 128],
+                "lr": {"low": 5e-4, "high": 2.5e-3, "log": True},
+                "kl_beta": {"low": 1e-5, "high": 3e-4, "log": True},
+            }
+        },
+    }
+    trial = FakeTrial()
+
+    apply_trial_suggestions(config, trial)
+
+    assert trial.categorical_calls == [
+        ("hidden_dim", [128, 256]),
+        ("branch_dim", [32, 64, 128]),
+    ]
+    assert trial.float_calls == [
+        ("lr", 5e-4, 2.5e-3, True),
+        ("kl_beta", 1e-5, 3e-4, True),
+    ]
+    assert config["model"]["hidden_dim"] == 256
+    assert config["model"]["branch_dim"] == 128
+    assert config["training"]["lr"] == 2.5e-3
+    assert config["training"]["kl_beta"] == 3e-4
 
 
 def test_merge_best_params_updates_model_and_training_values():
