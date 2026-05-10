@@ -8,7 +8,15 @@ import pandas as pd
 import yaml
 
 from src import tune
-from src.tune import apply_trial_suggestions, export_study_results, load_objective_metric, merge_best_params, prepare_trial_config
+from src.tune import (
+    apply_trial_suggestions,
+    export_study_results,
+    format_study_summary,
+    format_trial_config,
+    load_objective_metric,
+    merge_best_params,
+    prepare_trial_config,
+)
 
 
 def test_load_objective_metric_reads_validation_metrics(tmp_path):
@@ -138,6 +146,62 @@ def test_apply_trial_suggestions_uses_configured_search_space():
     assert config["model"]["branch_dim"] == 128
     assert config["training"]["lr"] == 2.5e-3
     assert config["training"]["kl_beta"] == 3e-4
+
+
+def test_format_trial_config_prints_sampled_params_before_training():
+    """每个 trial 开训前应逐行显示本次采样到的参数。"""
+    config = {
+        "model": {"hidden_dim": 256, "branch_dim": 128},
+        "training": {"lr": 0.0018259913257430906, "kl_beta": 1.7099712671569545e-05, "epochs": 150, "patience": 15},
+    }
+
+    text = format_trial_config(12, config)
+
+    assert text == (
+        "\n========== Optuna Trial 12 ==========\n"
+        "Sampled params:\n"
+        "  hidden_dim: 256\n"
+        "  branch_dim: 128\n"
+        "  lr: 0.0018259913257430906\n"
+        "  kl_beta: 1.7099712671569545e-05\n"
+        "Training options:\n"
+        "  epochs: 150\n"
+        "  patience: 15\n"
+        "====================================="
+    )
+
+
+def test_format_study_summary_prints_best_params_on_multiple_lines(tmp_path):
+    """调参结束摘要不应把 best params 挤在一行 dict 里。"""
+
+    class FakeStudy:
+        best_params = {
+            "hidden_dim": 256,
+            "branch_dim": 64,
+            "lr": 0.00019544293665253097,
+            "kl_beta": 1.2114960587728605e-05,
+        }
+        best_value = 2448.0612226049443
+
+        class BestTrial:
+            number = 10
+
+        best_trial = BestTrial()
+
+    text = format_study_summary(FakeStudy(), tmp_path / "tuning" / "fixed")
+
+    assert text == (
+        "\nBest trial:\n"
+        "  number: 10\n"
+        "  value: 2448.0612226049443\n"
+        "\nBest params:\n"
+        "  hidden_dim: 256\n"
+        "  branch_dim: 64\n"
+        "  lr: 0.00019544293665253097\n"
+        "  kl_beta: 1.2114960587728605e-05\n"
+        "\nTuning results exported to:\n"
+        f"  {tmp_path / 'tuning' / 'fixed'}"
+    )
 
 
 def test_merge_best_params_updates_model_and_training_values():

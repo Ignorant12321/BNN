@@ -32,6 +32,7 @@ def main() -> None:
         """单个 trial 的目标函数。"""
         config = prepare_trial_config(base, tuning_run_name=run_name)
         apply_trial_suggestions(config, trial)
+        print(format_trial_config(trial.number, config), flush=True)
         run_dir = run_training(config)
         return load_objective_metric(run_dir, metric="rmse")
 
@@ -42,9 +43,8 @@ def main() -> None:
         study.optimize(objective, n_trials=n_trials)
     else:
         print(f"Study already has {len(study.trials)} trials; skipping optimization.")
-    print(study.best_params)
     export_dir = export_study_results(study, base, run_name=run_name)
-    print(f"Tuning results exported to: {export_dir}")
+    print(format_study_summary(study, export_dir))
 
 
 def prepare_trial_config(base_config: dict, platform: str = sys.platform, tuning_run_name: str | None = None) -> dict:
@@ -124,6 +124,53 @@ def apply_trial_suggestions(config: dict, trial) -> None:
         kl_beta_space["high"],
         log=kl_beta_space.get("log", True),
     )
+
+
+def format_trial_config(trial_number: int, config: dict) -> str:
+    """生成 trial 开始前的参数摘要，避免控制台输出挤成一行。"""
+    model = config.get("model", {})
+    training = config.get("training", {})
+    lines = [
+        "",
+        f"========== Optuna Trial {trial_number} ==========",
+        "Sampled params:",
+        f"  hidden_dim: {_format_value(model.get('hidden_dim'))}",
+        f"  branch_dim: {_format_value(model.get('branch_dim'))}",
+        f"  lr: {_format_value(training.get('lr'))}",
+        f"  kl_beta: {_format_value(training.get('kl_beta'))}",
+        "Training options:",
+        f"  epochs: {_format_value(training.get('epochs'))}",
+        f"  patience: {_format_value(training.get('patience'))}",
+        "=====================================",
+    ]
+    return "\n".join(lines)
+
+
+def format_study_summary(study, export_dir: str | Path) -> str:
+    """生成调参结束摘要，多行展示 best trial 和 best params。"""
+    lines = [
+        "",
+        "Best trial:",
+        f"  number: {study.best_trial.number}",
+        f"  value: {_format_value(study.best_value)}",
+        "",
+        "Best params:",
+    ]
+    for name, value in study.best_params.items():
+        lines.append(f"  {name}: {_format_value(value)}")
+    lines.extend(
+        [
+            "",
+            "Tuning results exported to:",
+            f"  {export_dir}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_value(value) -> str:
+    """统一格式化控制台里的标量值。"""
+    return str(value)
 
 
 def merge_best_params(base_config: dict, best_params: dict) -> dict:

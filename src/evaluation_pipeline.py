@@ -116,6 +116,11 @@ def predict_in_original_scale(model, loader, device, scalers, mc_samples: int) -
     return target, mean, std, samples
 
 
+def resolve_mc_samples(config: dict, default: int = 50) -> int:
+    """Return configured MC sample count, falling back to prediction default."""
+    return int(config.get("prediction", {}).get("mc_samples", default))
+
+
 def inverse_target(values: np.ndarray, scaler) -> np.ndarray:
     """把标准化后的目标值恢复到原始 AC_POWER 尺度。"""
     return scaler.inverse_transform(values.reshape(-1, 1)).reshape(values.shape)
@@ -178,7 +183,7 @@ def evaluate_loaded_model(
             loader,
             device,
             scalers,
-            config["prediction"]["mc_samples"],
+            resolve_mc_samples(config),
         )
     metrics = evaluate_predictions(target, mean, std, samples)
     outputs = output_names_for_split(run_path, normalized)

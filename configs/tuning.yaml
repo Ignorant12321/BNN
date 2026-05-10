@@ -32,19 +32,13 @@ training:
   patience: 15
 
 prediction:
-  mc_samples: 30
-  plot:
-    prefer_daylight: true
-    daylight_threshold: 1.0
-    max_points: 160
-    start_time: "2020-06-13 10:00:00"
-    end_time: "2020-06-13 14:00:00"
+  mc_samples: 50
 
 tuning:
   study_name: improved_bnn_tuning
   storage: sqlite:///outputs/tuning/optuna.db
   load_if_exists: true
-  n_trials: 45
+  n_trials: 50
   search_space:
     hidden_dim: [128, 256]
     branch_dim: [32, 64, 128]
