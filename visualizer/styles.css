@@ -166,6 +166,30 @@ input[type="search"] {
   line-height: 1.1;
 }
 
+.stat-card em {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.metric-stat label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mini-select {
+  min-height: 28px;
+  max-width: 104px;
+  padding: 4px 7px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -279,6 +303,34 @@ body.sidebar-collapsed .sidebar {
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.run-note-editor {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.run-note-editor textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 46px;
+  max-height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.run-note-editor textarea:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .run-color {

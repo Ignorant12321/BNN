@@ -10,6 +10,8 @@ const {
   getLightboxItemsForGroup,
   getMetricDatasetGroups,
   filterRunsBySearch,
+  getBestRunForMetric,
+  getRunNoteStorageKey,
   getTableSelectionClasses,
   nextSidebarCollapsed,
   summarizeFigureCoverage,
@@ -54,6 +56,30 @@ assert.deepEqual(
 
 assert.equal(formatValue(0.00019544293665253097), "0.000195");
 assert.equal(formatValue(undefined), "-");
+
+assert.equal(getRunNoteStorageKey("outputs/improved_bnn/20260510-193755"), "bnnVisualizer.note.outputs/improved_bnn/20260510-193755");
+assert.equal(
+  getBestRunForMetric(
+    [
+      { name: "run-a", testMetrics: { rmse: 120, picp_90: 0.88 }, validationMetrics: { rmse: 90 } },
+      { name: "run-b", testMetrics: { rmse: 100, picp_90: 0.91 }, validationMetrics: { rmse: 110 } },
+    ],
+    "testMetrics",
+    "rmse",
+  ).name,
+  "run-b",
+);
+assert.equal(
+  getBestRunForMetric(
+    [
+      { name: "run-a", testMetrics: { picp_90: 0.88 } },
+      { name: "run-b", testMetrics: { picp_90: 0.91 } },
+    ],
+    "testMetrics",
+    "picp_90",
+  ).name,
+  "run-b",
+);
 
 assert.deepEqual(
   filterRunsBySearch(

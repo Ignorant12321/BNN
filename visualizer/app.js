@@ -21,6 +21,10 @@
     runs: [],
     sidebarCollapsed: false,
     selectedCell: null,
+    summaryMetrics: {
+      test: "rmse",
+      validation: "rmse",
+    },
     lightbox: {
       open: false,
       groupName: "",
@@ -46,6 +50,21 @@
   function storeSidebarCollapsed(collapsed) {
     if (typeof localStorage === "undefined") return;
     localStorage.setItem("bnnVisualizer.sidebarCollapsed", String(collapsed));
+  }
+
+  function getRunNoteStorageKey(relativePath) {
+    return `bnnVisualizer.note.${relativePath}`;
+  }
+
+  function getStoredRunNote(relativePath, fallback = "") {
+    if (typeof localStorage === "undefined") return fallback;
+    const stored = localStorage.getItem(getRunNoteStorageKey(relativePath));
+    return stored === null ? fallback : stored;
+  }
+
+  function storeRunNote(relativePath, note) {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(getRunNoteStorageKey(relativePath), note);
   }
 
   function nextSidebarCollapsed(current) {
@@ -228,6 +247,19 @@
     return classes.join(" ");
   }
 
+  function getBestRunForMetric(runs, metricGroup, metricKey) {
+    let bestRun = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const run of runs) {
+      const score = getMetricScore(metricKey, run[metricGroup]?.[metricKey]);
+      if (score < bestScore) {
+        bestRun = run;
+        bestScore = score;
+      }
+    }
+    return bestRun;
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replaceAll("&", "&amp;")
@@ -293,7 +325,7 @@
       validationMetrics: safeJsonParse(validationMetricsText),
       pointMetrics: pointMetricsText ? parseCsv(pointMetricsText) : [],
       figures,
-      note: noteText ? noteText.trim() : "",
+      note: getStoredRunNote(item.relativePath, noteText ? noteText.trim() : ""),
     };
   }
 
@@ -424,19 +456,55 @@
     if (state.runs.length === 0) {
       container.innerHTML = `
         <article class="stat-card"><span>可见 run</span><strong>0</strong></article>
-        <article class="stat-card"><span>最佳 RMSE</span><strong>-</strong></article>
-        <article class="stat-card"><span>图像总数</span><strong>0</strong></article>
+        <article class="stat-card metric-stat">
+          <label>
+            <span>测试集最佳</span>
+            ${renderMetricSelect("summaryTestMetric", state.summaryMetrics.test)}
+          </label>
+          <strong>-</strong>
+          <em>-</em>
+        </article>
+        <article class="stat-card metric-stat">
+          <label>
+            <span>验证集最佳</span>
+            ${renderMetricSelect("summaryValidationMetric", state.summaryMetrics.validation)}
+          </label>
+          <strong>-</strong>
+          <em>-</em>
+        </article>
         <article class="stat-card"><span>缺失图像槽位</span><strong>0</strong></article>
       `;
       return;
     }
-    const bestRmse = summary.bestMetrics.rmse || "-";
-    const bestPicp = summary.bestMetrics.picp_90 || "-";
+    const bestTest = getBestRunForMetric(runs, "testMetrics", state.summaryMetrics.test);
+    const bestValidation = getBestRunForMetric(runs, "validationMetrics", state.summaryMetrics.validation);
     container.innerHTML = `
       <article class="stat-card"><span>可见 / 总 run</span><strong>${runs.length} / ${state.runs.length}</strong></article>
-      <article class="stat-card"><span>测试集 RMSE 最佳</span><strong>${escapeHtml(bestRmse)}</strong></article>
-      <article class="stat-card"><span>图像总数 / 组</span><strong>${coverage.imageCount} / ${coverage.groupCount}</strong></article>
+      <article class="stat-card metric-stat">
+        <label>
+          <span>测试集最佳</span>
+          ${renderMetricSelect("summaryTestMetric", state.summaryMetrics.test)}
+        </label>
+        <strong>${escapeHtml(bestTest?.name || "-")}</strong>
+        <em>${escapeHtml(formatValue(bestTest?.testMetrics?.[state.summaryMetrics.test]))}</em>
+      </article>
+      <article class="stat-card metric-stat">
+        <label>
+          <span>验证集最佳</span>
+          ${renderMetricSelect("summaryValidationMetric", state.summaryMetrics.validation)}
+        </label>
+        <strong>${escapeHtml(bestValidation?.name || "-")}</strong>
+        <em>${escapeHtml(formatValue(bestValidation?.validationMetrics?.[state.summaryMetrics.validation]))}</em>
+      </article>
       <article class="stat-card"><span>缺失图像槽位</span><strong>${coverage.missingSlots}</strong></article>
+    `;
+  }
+
+  function renderMetricSelect(id, selectedKey) {
+    return `
+      <select id="${id}" class="mini-select">
+        ${METRIC_KEYS.map((key) => `<option value="${key}" ${key === selectedKey ? "selected" : ""}>${key}</option>`).join("")}
+      </select>
     `;
   }
 
@@ -468,7 +536,10 @@
               <span>${escapeHtml(run.name)}</span>
             </label>
             <div class="run-path">${escapeHtml(run.relativePath)}</div>
-            ${run.note ? `<div class="run-note">${escapeHtml(run.note)}</div>` : ""}
+            <label class="run-note-editor">
+              <span>备注</span>
+              <textarea data-run-note="${escapeHtml(run.id)}" rows="2" placeholder="填写本次实验备注">${escapeHtml(run.note)}</textarea>
+            </label>
           </article>
         `,
       )
@@ -923,6 +994,16 @@
 
     document.getElementById("clearButton").addEventListener("click", clearRuns);
     document.getElementById("exportButton").addEventListener("click", exportCurrentComparison);
+    document.getElementById("summaryStats").addEventListener("change", (event) => {
+      if (event.target.id === "summaryTestMetric") {
+        state.summaryMetrics.test = event.target.value;
+        renderSummaryStats();
+      }
+      if (event.target.id === "summaryValidationMetric") {
+        state.summaryMetrics.validation = event.target.value;
+        renderSummaryStats();
+      }
+    });
     document.getElementById("sidebarToggle").addEventListener("click", () => {
       state.sidebarCollapsed = nextSidebarCollapsed(state.sidebarCollapsed);
       storeSidebarCollapsed(state.sidebarCollapsed);
@@ -941,6 +1022,15 @@
       const run = state.runs.find((item) => item.id === runId);
       if (run) run.visible = event.target.checked;
       render();
+    });
+
+    document.getElementById("runList").addEventListener("input", (event) => {
+      const runId = event.target.dataset.runNote;
+      if (!runId) return;
+      const run = state.runs.find((item) => item.id === runId);
+      if (!run) return;
+      run.note = event.target.value;
+      storeRunNote(run.relativePath, run.note);
     });
 
     document.querySelector(".content").addEventListener("click", (event) => {
@@ -996,9 +1086,11 @@
     filterRunsBySearch,
     flattenObject,
     formatValue,
+    getBestRunForMetric,
     getTableSelectionClasses,
     getMetricDatasetGroups,
     getMetricScore,
+    getRunNoteStorageKey,
     groupFiguresByName,
     getLightboxItemsForGroup,
     nextSidebarCollapsed,

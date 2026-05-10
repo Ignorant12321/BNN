@@ -12,7 +12,7 @@ data:
 model:
   name: improved_bnn
   hidden_dim: 256
-  branch_dim: 64
+  branch_dim: 128
   prior_sigma: 1.0
 training:
   device: auto
@@ -23,9 +23,9 @@ training:
   persistent_workers: false
   amp: true
   cudnn_benchmark: true
-  lr: 0.0007621948724043314
+  lr: 0.0018259913257430906
   weight_decay: 0.0001
-  kl_beta: 1.0053915983841731e-05
+  kl_beta: 1.7099712671569545e-05
   patience: 30
 prediction:
   mc_samples: 30
