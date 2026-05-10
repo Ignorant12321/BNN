@@ -31,11 +31,16 @@
       index: 0,
       items: [],
     },
+    persistence: {
+      hiddenRunPaths: [],
+      runNotes: {},
+      serverAvailable: false,
+    },
     toastTimer: null,
   };
 
   function normalizePath(path) {
-    return String(path || "").replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+    return String(path || "").trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
   }
 
   function getFilePath(file) {
@@ -65,6 +70,54 @@
   function storeRunNote(relativePath, note) {
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(getRunNoteStorageKey(relativePath), note);
+  }
+
+  function getStoredHiddenRunPaths() {
+    if (typeof localStorage === "undefined") return [];
+    return normalizeRunPaths(safeJsonParse(localStorage.getItem("bnnVisualizer.hiddenRunPaths")) || []);
+  }
+
+  function storeHiddenRunPaths(hiddenRunPaths) {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("bnnVisualizer.hiddenRunPaths", JSON.stringify(normalizeRunPaths(hiddenRunPaths)));
+  }
+
+  function normalizeRunPaths(paths) {
+    return [...new Set((Array.isArray(paths) ? paths : []).map((path) => normalizePath(path)).filter(Boolean))].sort();
+  }
+
+  function isRunHidden(relativePath, hiddenRunPaths) {
+    const target = normalizePath(relativePath);
+    return normalizeRunPaths(hiddenRunPaths).includes(target);
+  }
+
+  function updateHiddenRunPaths(hiddenRunPaths, relativePath, visible) {
+    const next = new Set(normalizeRunPaths(hiddenRunPaths));
+    const target = normalizePath(relativePath);
+    if (!target) return [...next].sort();
+    if (visible) {
+      next.delete(target);
+    } else {
+      next.add(target);
+    }
+    return [...next].sort();
+  }
+
+  function normalizeRunNotes(notes) {
+    if (!notes || typeof notes !== "object" || Array.isArray(notes)) return {};
+    return Object.fromEntries(
+      Object.entries(notes)
+        .map(([path, note]) => [normalizePath(path), String(note ?? "")])
+        .filter(([path]) => path)
+        .sort(([left], [right]) => left.localeCompare(right)),
+    );
+  }
+
+  function getRunNoteFromSources(relativePath, fileNote = "", persistedNotes = {}) {
+    const key = normalizePath(relativePath);
+    const notes = normalizeRunNotes(persistedNotes);
+    if (Object.hasOwn(notes, key)) return notes[key];
+    return String(fileNote || "").trim();
   }
 
   function nextSidebarCollapsed(current) {
@@ -291,6 +344,58 @@
     return newRuns;
   }
 
+  async function fetchJson(path, fallback) {
+    if (typeof fetch === "undefined") return fallback;
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  }
+
+  async function putJson(path, payload) {
+    if (typeof fetch === "undefined") return;
+    const response = await fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  async function loadPersistenceState() {
+    try {
+      const [hiddenPayload, notesPayload] = await Promise.all([
+        fetchJson("/api/hidden-runs", { hiddenRuns: [] }),
+        fetchJson("/api/run-notes", { notes: {} }),
+      ]);
+      state.persistence.hiddenRunPaths = normalizeRunPaths(hiddenPayload.hiddenRuns);
+      state.persistence.runNotes = normalizeRunNotes(notesPayload.notes);
+      state.persistence.serverAvailable = true;
+    } catch {
+      state.persistence.hiddenRunPaths = getStoredHiddenRunPaths();
+      state.persistence.runNotes = {};
+      state.persistence.serverAvailable = false;
+    }
+  }
+
+  async function saveHiddenRunPaths(hiddenRunPaths) {
+    const normalized = normalizeRunPaths(hiddenRunPaths);
+    state.persistence.hiddenRunPaths = normalized;
+    storeHiddenRunPaths(normalized);
+    if (!state.persistence.serverAvailable) return;
+    await putJson("/api/hidden-runs", { hiddenRuns: normalized });
+  }
+
+  async function saveRunNotes(notes) {
+    const normalized = normalizeRunNotes(notes);
+    state.persistence.runNotes = normalized;
+    if (!state.persistence.serverAvailable) return;
+    await putJson("/api/run-notes", { notes: normalized });
+  }
+
+  function reportPersistenceError(error) {
+    if (state.persistence.serverAvailable) showToast(`保存失败：${error.message}`, true);
+  }
+
   async function readTextIfPresent(files, relativePath) {
     const file = files.get(relativePath);
     return file ? file.text() : null;
@@ -317,7 +422,7 @@
       id: `${item.relativePath}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       name: item.name,
       relativePath: item.relativePath,
-      visible: true,
+      visible: !isRunHidden(item.relativePath, state.persistence.hiddenRunPaths),
       color: PALETTE[index % PALETTE.length],
       config,
       flatConfig: flattenObject(config),
@@ -325,7 +430,9 @@
       validationMetrics: safeJsonParse(validationMetricsText),
       pointMetrics: pointMetricsText ? parseCsv(pointMetricsText) : [],
       figures,
-      note: getStoredRunNote(item.relativePath, noteText ? noteText.trim() : ""),
+      note: state.persistence.serverAvailable
+        ? getRunNoteFromSources(item.relativePath, noteText, state.persistence.runNotes)
+        : getStoredRunNote(item.relativePath, getRunNoteFromSources(item.relativePath, noteText, state.persistence.runNotes)),
     };
   }
 
@@ -1020,7 +1127,10 @@
       const runId = event.target.dataset.runToggle;
       if (!runId) return;
       const run = state.runs.find((item) => item.id === runId);
-      if (run) run.visible = event.target.checked;
+      if (run) {
+        run.visible = event.target.checked;
+        saveHiddenRunPaths(updateHiddenRunPaths(state.persistence.hiddenRunPaths, run.relativePath, run.visible)).catch(reportPersistenceError);
+      }
       render();
     });
 
@@ -1031,6 +1141,8 @@
       if (!run) return;
       run.note = event.target.value;
       storeRunNote(run.relativePath, run.note);
+      state.persistence.runNotes[normalizePath(run.relativePath)] = run.note;
+      saveRunNotes(state.persistence.runNotes).catch(reportPersistenceError);
     });
 
     document.querySelector(".content").addEventListener("click", (event) => {
@@ -1075,8 +1187,9 @@
     });
   }
 
-  function startBrowserApp() {
+  async function startBrowserApp() {
     if (typeof document === "undefined") return;
+    await loadPersistenceState();
     bindEvents();
     render();
   }
@@ -1091,13 +1204,17 @@
     getMetricDatasetGroups,
     getMetricScore,
     getRunNoteStorageKey,
+    getRunNoteFromSources,
     groupFiguresByName,
     getLightboxItemsForGroup,
+    isRunHidden,
     nextSidebarCollapsed,
+    normalizeRunPaths,
     parseCsv,
     parseSimpleYaml,
     summarizeFigureCoverage,
     summarizeRuns,
+    updateHiddenRunPaths,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

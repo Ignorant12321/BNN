@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src.metrics import mae, pinaw, picp, rmse, smape
+from src.metrics import gaussian_crps_np, mae, pinaw, picp, rmse, smape
 
 
 def test_point_metrics_return_expected_values():
@@ -23,3 +23,14 @@ def test_interval_metrics_measure_coverage_and_width():
 
     assert picp(y, lower, upper) == 2 / 3
     assert pinaw(y, lower, upper) == 2 / 3
+
+
+def test_gaussian_crps_rewards_sharp_calibrated_predictions():
+    """Gaussian CRPS should be small for an exact mean with finite uncertainty."""
+    y = np.array([0.0])
+    mean = np.array([0.0])
+    std = np.array([1.0])
+
+    expected = (np.sqrt(2.0) - 1.0) / np.sqrt(np.pi)
+
+    assert round(gaussian_crps_np(y, mean, std), 6) == round(expected, 6)

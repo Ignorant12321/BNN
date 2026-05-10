@@ -218,6 +218,7 @@ loss = Gaussian NLL(mean, log_var, target) + beta * KL / num_batches
 | `storage` | Optuna 持久化存储位置，例如 `sqlite:///outputs/tuning/optuna.db` |
 | `load_if_exists` | storage 中已有同名 study 时是否继续加载 |
 | `n_trials` | 目标总 trial 数，不是每次启动追加的数量 |
+| `objective_metric` | Optuna 选择最佳 trial 的验证集指标，例如 `rmse`、`nll` 或 `crps`；数值越小越好 |
 | `search_space.hidden_dim` | `model.hidden_dim` 的候选列表 |
 | `search_space.branch_dim` | `model.branch_dim` 的候选列表 |
 | `search_space.lr.low/high/log` | 学习率搜索下界、上界以及是否按对数尺度采样 |
@@ -227,7 +228,7 @@ loss = Gaussian NLL(mean, log_var, target) + beta * KL / num_batches
 
 1. 改了 `default.yaml` 不会自动同步到 `tuning.yaml`，两份配置需要按实验目的分别维护。
 2. 调参时 `model.hidden_dim`、`model.branch_dim`、`training.lr`、`training.kl_beta` 会被 `tuning.search_space` 覆盖；它们保留在 `tuning.yaml` 里主要是为了让这份文件仍可作为普通训练配置使用。
-3. 最终论文或报告结果应来自测试集 `metrics/metrics.json`；调参和模型选择应看验证集 `metrics/validation_metrics.json`。
+3. 最终论文或报告结果应来自测试集 `metrics/metrics.json`；调参和模型选择应看验证集 `metrics/validation_metrics.json` 中的 `tuning.objective_metric`。
 
 ## 运行
 
@@ -242,6 +243,14 @@ pip install -r requirements.txt
 ```bash
 pytest -q
 ```
+
+可视化页面位于 `visualizer/`。如果只需要临时查看，可以用 Live Server 打开静态页面；如果需要把 run 的勾选状态和备注同步保存到文件，请用内置 Python 本地服务启动：
+
+```bash
+python visualizer/server.py
+```
+
+打开终端输出的地址后，取消勾选的 run 会保存到 `visualizer/hidden-runs.json`，侧栏备注会保存到 `visualizer/run-notes.json`。再次打开可视化并添加实验文件夹时，这些记录会自动恢复。
 
 推荐工作流：
 
@@ -291,6 +300,10 @@ python -m src.tune
 此时 `tuning.n_trials` 表示目标总 trial 数，而不是每次重启追加的 trial 数。
 Optuna 的搜索范围配置在 `configs/tuning.yaml` 的 `tuning.search_space` 中；例如
 `lr.low`/`lr.high` 控制学习率范围，`kl_beta.low`/`kl_beta.high` 控制 BNN 的 KL 权重范围。
+`tuning.objective_metric` 控制最佳 trial 的评定指标；BNN 概率预测推荐使用 `crps`，
+如果只关心点预测精度，可以改为 `rmse`。
+切换 `objective_metric` 时应同步更换 `study_name`，或清空旧的 Optuna storage，
+避免同一个 study 中混入不同指标的 trial value。
 `training.epochs` 和 `training.patience` 则控制每个 trial 最多训练多少轮以及 early stopping 的耐心值。
 
 把最新调参结果迁移到正式训练配置：
@@ -301,9 +314,13 @@ python -m src.apply_tuning
 
 该命令默认读取最新 `outputs/tuning/*/best_params.json`，只迁移 Optuna 实际搜索的
 `model.hidden_dim`、`model.branch_dim`、`training.lr` 和 `training.kl_beta`，并打印每个字段的
-旧值、新值和是否发生变化。也可以显式指定来源或先预览：
+旧值、新值和是否发生变化。当 `--source latest` 时，它会读取 `configs/tuning.yaml` 里的
+`tuning.objective_metric`，只从相同目标指标的调参结果中选择最新一份。也可以显式指定目标、
+来源或先预览：
 
 ```bash
+python -m src.apply_tuning --objective rmse
+python -m src.apply_tuning --objective crps
 python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json
 python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json --dry-run
 ```
@@ -355,11 +372,12 @@ outputs/improved_bnn/YYYYMMDD-HHMMSS/
 | `rmse` | 均方根误差，对大误差更敏感 | 否 |
 | `nrmse` | 用真实值范围归一化后的 RMSE，便于不同实验对比 | 否 |
 | `smape` | 对称平均绝对百分比误差，夜间接近 0 时会比较敏感 | 否 |
+| `crps` | 连续排名概率分数，综合评价概率预测的准确性、校准性和锐度 | 否 |
 | `nll` | 高斯负对数似然，综合评价均值和方差是否合理 | 否 |
 | `picp_90` / `picp_95` | 90% / 95% 预测区间覆盖率，表示真实值落入区间的比例 | 越接近目标覆盖率越好 |
 | `pinaw_90` / `pinaw_95` | 90% / 95% 预测区间归一化平均宽度 | 在 PICP 达标前提下越小越好 |
 
-简单判断规则：点预测主要看 `mae`、`rmse`、`nrmse`，数值越低越好；概率预测不能只看区间越窄，还要同时看 `picp`。理想情况下，`picp_90` 接近 0.90、`picp_95` 接近 0.95，并且 `pinaw` 不要过大。如果 `picp` 很低，说明区间太窄、真实值经常落在区间外；如果 `picp` 很高但 `pinaw` 也很大，说明区间过宽，预测虽然保守但信息量不足。
+简单判断规则：点预测主要看 `mae`、`rmse`、`nrmse`，数值越低越好；概率预测优先看 `crps`，并同时检查 `picp` 和 `pinaw`。理想情况下，`picp_90` 接近 0.90、`picp_95` 接近 0.95，并且 `pinaw` 不要过大。如果 `picp` 很低，说明区间太窄、真实值经常落在区间外；如果 `picp` 很高但 `pinaw` 也很大，说明区间过宽，预测虽然保守但信息量不足。
 
 ## 代码结构
 

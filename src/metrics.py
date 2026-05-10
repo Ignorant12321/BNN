@@ -3,10 +3,12 @@
 本模块同时提供点预测指标和概率预测指标：
 
 - MAE / RMSE / nRMSE / sMAPE 衡量预测均值的准确性。
-- NLL / PICP / PINAW 衡量预测分布和区间质量。
+- CRPS / NLL / PICP / PINAW 衡量预测分布和区间质量。
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
@@ -45,6 +47,17 @@ def gaussian_nll_np(y_true, mean, var) -> float:
     y_true, mean, var = _arrays(y_true, mean, var)
     var = np.maximum(var, 1e-8)
     return float(np.mean(0.5 * (np.log(2 * np.pi * var) + (y_true - mean) ** 2 / var)))
+
+
+def gaussian_crps_np(y_true, mean, std) -> float:
+    """Gaussian CRPS，用于评价正态预测分布的整体质量。"""
+    y_true, mean, std = _arrays(y_true, mean, std)
+    std = np.maximum(std, 1e-8)
+    z = (y_true - mean) / std
+    cdf = 0.5 * (1.0 + np.vectorize(math.erf)(z / np.sqrt(2.0)))
+    pdf = np.exp(-0.5 * z**2) / np.sqrt(2.0 * np.pi)
+    crps = std * (z * (2.0 * cdf - 1.0) + 2.0 * pdf - 1.0 / np.sqrt(np.pi))
+    return float(np.mean(crps))
 
 
 def picp(y_true, lower, upper) -> float:

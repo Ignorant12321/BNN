@@ -35,16 +35,17 @@ prediction:
   mc_samples: 50
 
 tuning:
-  study_name: improved_bnn_tuning
+  study_name: improved_bnn_tuning_crps
   storage: sqlite:///outputs/tuning/optuna.db
   load_if_exists: true
-  n_trials: 50
+  n_trials: 180
+  objective_metric: crps
   search_space:
     hidden_dim: [128, 256]
-    branch_dim: [32, 64, 128]
+    branch_dim: [64, 128, 256]
     lr:
       low: 5.0e-4
-      high: 2.5e-3
+      high: 3.0e-3
       log: true
     kl_beta:
       low: 1.0e-5

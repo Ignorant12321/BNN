@@ -262,7 +262,7 @@ def _relative_to_run_dir(path: Path, run_dir: Path) -> str:
 
 def _format_core_metrics(metrics: dict[str, float]) -> str:
     """按固定顺序输出常用评估指标，缺失时自动跳过。"""
-    preferred = ["rmse", "mae", "smape", "nrmse", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
+    preferred = ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
     parts = []
     for key in preferred:
         if key in metrics:

@@ -50,12 +50,31 @@ def load_best_params(path: str | Path) -> dict[str, Any]:
     return best_params
 
 
-def find_latest_best_params(tuning_dir: str | Path = "outputs/tuning") -> Path:
-    """Return the newest timestamped tuning summary under ``outputs/tuning``."""
+def load_summary_objective(path: str | Path) -> str:
+    """Read the objective metric recorded in a tuning summary.
+
+    Older summaries did not store this field; those runs optimized RMSE.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return str(payload.get("objective_metric", "rmse"))
+
+
+def resolve_default_objective(config_path: str | Path = "configs/tuning.yaml") -> str:
+    """Read the default apply-tuning objective from the tuning config."""
+    config = load_config(config_path)
+    return str(config.get("tuning", {}).get("objective_metric", "rmse"))
+
+
+def find_latest_best_params(tuning_dir: str | Path = "outputs/tuning", objective_metric: str | None = None) -> Path:
+    """Return the newest timestamped tuning summary, optionally filtered by objective."""
     tuning_path = Path(tuning_dir)
     candidates = sorted(tuning_path.glob("*/best_params.json"), key=lambda path: path.parent.name)
+    if objective_metric is not None:
+        candidates = [path for path in candidates if load_summary_objective(path) == objective_metric]
     if not candidates:
-        raise FileNotFoundError(f"No best_params.json found under {tuning_path}")
+        suffix = f" for objective_metric={objective_metric!r}" if objective_metric is not None else ""
+        raise FileNotFoundError(f"No best_params.json found under {tuning_path}{suffix}")
     return candidates[-1]
 
 
@@ -98,6 +117,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="latest",
         help="Path to best_params.json, or 'latest' to use newest outputs/tuning/*/best_params.json.",
     )
+    parser.add_argument(
+        "--objective",
+        default=None,
+        help="Objective metric to select when --source latest. Defaults to tuning.objective_metric from --config.",
+    )
+    parser.add_argument("--config", default="configs/tuning.yaml", help="Tuning config used to resolve the default objective.")
     parser.add_argument("--target", default="configs/default.yaml", help="YAML config to update.")
     parser.add_argument("--tuning-dir", default="outputs/tuning", help="Directory used when --source latest.")
     parser.add_argument("--dry-run", action="store_true", help="Print changes without writing the target config.")
@@ -108,11 +133,18 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    source = find_latest_best_params(args.tuning_dir) if args.source == "latest" else Path(args.source)
+    objective = None
+    if args.source == "latest":
+        objective = args.objective or resolve_default_objective(args.config)
+        source = find_latest_best_params(args.tuning_dir, objective_metric=objective)
+    else:
+        source = Path(args.source)
     changes = apply_best_params(source, args.target, dry_run=args.dry_run)
 
     print(f"Source: {source}")
     print(f"Target: {args.target}")
+    if args.source == "latest":
+        print(f"Objective: {objective}")
     if args.dry_run:
         print("Mode: dry-run")
     if not changes:

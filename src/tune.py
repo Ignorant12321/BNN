@@ -14,11 +14,15 @@ from __future__ import annotations
 import copy
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from src.train import run_training
 from src.utils import load_config, save_config, save_json
+
+
+METRIC_ORDER = ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
 
 
 def main() -> None:
@@ -27,16 +31,30 @@ def main() -> None:
 
     base = load_config("configs/tuning.yaml")
     run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
+    objective_metric = resolve_objective_metric(base)
+    tuning_started_at = time.perf_counter()
 
     def objective(trial):
         """单个 trial 的目标函数。"""
+        trial_started_at = time.perf_counter()
         config = prepare_trial_config(base, tuning_run_name=run_name)
         apply_trial_suggestions(config, trial)
         print(format_trial_config(trial.number, config), flush=True)
         run_dir = run_training(config)
-        return load_objective_metric(run_dir, metric="rmse")
+        metrics = load_validation_metrics(run_dir)
+        print(
+            format_trial_result(
+                trial.number,
+                run_dir,
+                metrics,
+                objective_metric,
+                elapsed_seconds=time.perf_counter() - trial_started_at,
+            ),
+            flush=True,
+        )
+        return float(metrics[objective_metric])
 
-    # direction=minimize 表示 RMSE 越小越好。
+    # direction=minimize 表示目标指标越小越好。
     study = create_tuning_study(optuna, base)
     n_trials = count_remaining_trials(study, target_n_trials=base["tuning"]["n_trials"])
     if n_trials > 0:
@@ -44,7 +62,14 @@ def main() -> None:
     else:
         print(f"Study already has {len(study.trials)} trials; skipping optimization.")
     export_dir = export_study_results(study, base, run_name=run_name)
-    print(format_study_summary(study, export_dir))
+    print(
+        format_study_summary(
+            study,
+            export_dir,
+            objective_metric=objective_metric,
+            elapsed_seconds=time.perf_counter() - tuning_started_at,
+        )
+    )
 
 
 def prepare_trial_config(base_config: dict, platform: str = sys.platform, tuning_run_name: str | None = None) -> dict:
@@ -98,6 +123,11 @@ def count_remaining_trials(study, target_n_trials: int) -> int:
     return max(0, target_n_trials - len(study.trials))
 
 
+def resolve_objective_metric(config: dict) -> str:
+    """读取 Optuna 目标指标；默认保持历史 RMSE 行为。"""
+    return str(config.get("tuning", {}).get("objective_metric", "rmse"))
+
+
 def apply_trial_suggestions(config: dict, trial) -> None:
     """根据 tuning.search_space 采样超参数并写回 trial 配置。"""
     search_space = config.get("tuning", {}).get("search_space", {})
@@ -132,7 +162,7 @@ def format_trial_config(trial_number: int, config: dict) -> str:
     training = config.get("training", {})
     lines = [
         "",
-        f"========== Optuna Trial {trial_number} ==========",
+        f"========== Optuna Trial {trial_number + 1} ==========",
         "Sampled params:",
         f"  hidden_dim: {_format_value(model.get('hidden_dim'))}",
         f"  branch_dim: {_format_value(model.get('branch_dim'))}",
@@ -146,16 +176,56 @@ def format_trial_config(trial_number: int, config: dict) -> str:
     return "\n".join(lines)
 
 
-def format_study_summary(study, export_dir: str | Path) -> str:
+def format_trial_result(
+    trial_number: int,
+    run_dir: str | Path,
+    metrics: dict[str, float],
+    objective_metric: str,
+    elapsed_seconds: float,
+) -> str:
+    """生成单个 trial 结束后的摘要。"""
+    lines = [
+        "",
+        f"========== Optuna Trial {trial_number + 1} Complete ==========",
+        f"elapsed_time: {format_duration(elapsed_seconds)}",
+        f"objective_metric: {objective_metric}",
+        f"objective_value: {_format_metric(metrics[objective_metric])}",
+        "Validation metrics:",
+    ]
+    lines.extend(format_metric_lines(metrics))
+    lines.extend(
+        [
+            f"run_dir: {run_dir}",
+            "==============================================",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def format_study_summary(
+    study,
+    export_dir: str | Path,
+    objective_metric: str = "rmse",
+    elapsed_seconds: float | None = None,
+) -> str:
     """生成调参结束摘要，多行展示 best trial 和 best params。"""
     lines = [
         "",
+        "Tuning Summary",
+    ]
+    if elapsed_seconds is not None:
+        lines.append(f"elapsed_time: {format_duration(elapsed_seconds)}")
+    lines.extend(
+        [
+            f"objective_metric: {objective_metric}",
+            "",
         "Best trial:",
-        f"  number: {study.best_trial.number}",
+        f"  number: {study.best_trial.number + 1}",
         f"  value: {_format_value(study.best_value)}",
         "",
         "Best params:",
-    ]
+        ]
+    )
     for name, value in study.best_params.items():
         lines.append(f"  {name}: {_format_value(value)}")
     lines.extend(
@@ -168,9 +238,35 @@ def format_study_summary(study, export_dir: str | Path) -> str:
     return "\n".join(lines)
 
 
+def format_metric_lines(metrics: dict[str, float]) -> list[str]:
+    """按固定顺序格式化验证集指标。"""
+    lines = []
+    for key in METRIC_ORDER:
+        if key in metrics:
+            lines.append(f"  {key}: {_format_metric(metrics[key])}")
+    for key in sorted(set(metrics) - set(METRIC_ORDER)):
+        value = metrics[key]
+        if isinstance(value, int | float):
+            lines.append(f"  {key}: {_format_metric(value)}")
+    return lines
+
+
+def format_duration(seconds: float) -> str:
+    """把秒数格式化为 HH:MM:SS。"""
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def _format_value(value) -> str:
     """统一格式化控制台里的标量值。"""
     return str(value)
+
+
+def _format_metric(value: float) -> str:
+    """统一格式化控制台里的指标值。"""
+    return f"{float(value):.6f}"
 
 
 def merge_best_params(base_config: dict, best_params: dict) -> dict:
@@ -197,6 +293,7 @@ def export_study_results(study, base_config: dict, run_name: str | None = None) 
     export_dir.mkdir(parents=True, exist_ok=True)
 
     summary = {
+        "objective_metric": resolve_objective_metric(base_config),
         "best_trial": study.best_trial.number,
         "best_value": float(study.best_value),
         "best_params": dict(study.best_params),
@@ -212,10 +309,15 @@ def load_objective_metric(run_dir: str | Path, metric: str = "rmse") -> float:
 
     调参必须使用验证集指标，避免测试集参与模型选择。
     """
+    return float(load_validation_metrics(run_dir)[metric])
+
+
+def load_validation_metrics(run_dir: str | Path) -> dict[str, float]:
+    """读取完整验证集指标。"""
     path = Path(run_dir) / "metrics" / "validation_metrics.json"
     with open(path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
-    return float(metrics[metric])
+    return {key: float(value) for key, value in metrics.items()}
 
 
 if __name__ == "__main__":

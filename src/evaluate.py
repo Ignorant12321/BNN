@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.metrics import gaussian_nll_np, mae, nrmse, pinaw, picp, rmse, smape
+from src.metrics import gaussian_crps_np, gaussian_nll_np, mae, nrmse, pinaw, picp, rmse, smape
 from src.predict import interval_from_mean_std
 
 
@@ -24,6 +24,7 @@ def evaluate_predictions(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, 
         "rmse": rmse(y_true, mean),
         "nrmse": nrmse(y_true, mean),
         "smape": smape(y_true, mean),
+        "crps": gaussian_crps_np(y_true, mean, std),
         "nll": gaussian_nll_np(y_true, mean, std**2),
         "picp_90": picp(y_true, lower90, upper90),
         "pinaw_90": pinaw(y_true, lower90, upper90),

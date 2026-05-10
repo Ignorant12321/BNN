@@ -8,7 +8,7 @@ import sys
 
 import yaml
 
-from src.apply_tuning import apply_best_params, find_latest_best_params
+from src.apply_tuning import apply_best_params, find_latest_best_params, resolve_default_objective
 
 
 def test_apply_best_params_updates_only_optuna_fields_and_reports_changes(tmp_path):
@@ -77,6 +77,50 @@ def test_find_latest_best_params_uses_newest_tuning_directory(tmp_path):
     assert find_latest_best_params(tmp_path) == new_dir / "best_params.json"
 
 
+def test_find_latest_best_params_filters_by_objective_metric(tmp_path):
+    rmse_dir = tmp_path / "20260510-100000"
+    crps_dir = tmp_path / "20260510-110000"
+    newest_rmse_dir = tmp_path / "20260510-120000"
+    rmse_dir.mkdir()
+    crps_dir.mkdir()
+    newest_rmse_dir.mkdir()
+    (rmse_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "rmse", "best_params": {"lr": 0.001}}),
+        encoding="utf-8",
+    )
+    (crps_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "crps", "best_params": {"lr": 0.002}}),
+        encoding="utf-8",
+    )
+    (newest_rmse_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "rmse", "best_params": {"lr": 0.003}}),
+        encoding="utf-8",
+    )
+
+    assert find_latest_best_params(tmp_path, objective_metric="crps") == crps_dir / "best_params.json"
+
+
+def test_find_latest_best_params_treats_legacy_summaries_as_rmse(tmp_path):
+    legacy_dir = tmp_path / "20260510-100000"
+    crps_dir = tmp_path / "20260510-110000"
+    legacy_dir.mkdir()
+    crps_dir.mkdir()
+    (legacy_dir / "best_params.json").write_text(json.dumps({"best_params": {"lr": 0.001}}), encoding="utf-8")
+    (crps_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "crps", "best_params": {"lr": 0.002}}),
+        encoding="utf-8",
+    )
+
+    assert find_latest_best_params(tmp_path, objective_metric="rmse") == legacy_dir / "best_params.json"
+
+
+def test_resolve_default_objective_reads_tuning_config(tmp_path):
+    config_path = tmp_path / "tuning.yaml"
+    config_path.write_text(yaml.safe_dump({"tuning": {"objective_metric": "crps"}}), encoding="utf-8")
+
+    assert resolve_default_objective(config_path) == "crps"
+
+
 def test_apply_tuning_cli_prints_changed_and_unchanged_fields(tmp_path):
     target_path = tmp_path / "default.yaml"
     target_path.write_text(
@@ -103,3 +147,44 @@ def test_apply_tuning_cli_prints_changed_and_unchanged_fields(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "model.hidden_dim: 128 -> 128 (unchanged)" in result.stdout
     assert "training.lr: 0.001 -> 0.0002 (changed)" in result.stdout
+
+
+def test_apply_tuning_cli_uses_config_objective_for_latest_source(tmp_path):
+    tuning_dir = tmp_path / "tuning"
+    rmse_dir = tuning_dir / "20260510-100000"
+    crps_dir = tuning_dir / "20260510-110000"
+    rmse_dir.mkdir(parents=True)
+    crps_dir.mkdir()
+    (rmse_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "rmse", "best_params": {"lr": 0.001}}),
+        encoding="utf-8",
+    )
+    (crps_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "crps", "best_params": {"lr": 0.002}}),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "tuning.yaml"
+    config_path.write_text(yaml.safe_dump({"tuning": {"objective_metric": "crps"}}), encoding="utf-8")
+    target_path = tmp_path / "default.yaml"
+    target_path.write_text(yaml.safe_dump({"training": {"lr": 0.01}}, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.apply_tuning",
+            "--tuning-dir",
+            str(tuning_dir),
+            "--config",
+            str(config_path),
+            "--target",
+            str(target_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"Source: {crps_dir / 'best_params.json'}" in result.stdout
+    assert "Objective: crps" in result.stdout
+    assert yaml.safe_load(target_path.read_text(encoding="utf-8"))["training"]["lr"] == 0.002

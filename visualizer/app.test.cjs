@@ -14,6 +14,10 @@ const {
   getRunNoteStorageKey,
   getTableSelectionClasses,
   nextSidebarCollapsed,
+  getRunNoteFromSources,
+  isRunHidden,
+  normalizeRunPaths,
+  updateHiddenRunPaths,
   summarizeFigureCoverage,
   summarizeRuns,
 } = require("./app.js");
@@ -94,6 +98,20 @@ assert.deepEqual(
 
 assert.equal(nextSidebarCollapsed(false), true);
 assert.equal(nextSidebarCollapsed(true), false);
+
+assert.deepEqual(normalizeRunPaths([" outputs\\b\\20260510-193755 ", "", "outputs/b/20260510-193755"]), ["outputs/b/20260510-193755"]);
+assert.equal(isRunHidden("outputs/b/20260510-193755", ["outputs/b/20260510-193755"]), true);
+assert.equal(isRunHidden("outputs/b/20260510-193755", ["outputs/b/20260509-223920"]), false);
+assert.deepEqual(updateHiddenRunPaths(["outputs/b/20260509-223920"], "outputs/b/20260510-193755", false), [
+  "outputs/b/20260509-223920",
+  "outputs/b/20260510-193755",
+]);
+assert.deepEqual(updateHiddenRunPaths(["outputs/b/20260510-193755"], "outputs/b/20260510-193755", true), []);
+assert.equal(getRunNoteFromSources("outputs/b/20260510-193755", "note from file\n", {}), "note from file");
+assert.equal(
+  getRunNoteFromSources("outputs/b/20260510-193755", "note from file", { "outputs/b/20260510-193755": "note from service" }),
+  "note from service",
+);
 
 assert.equal(getTableSelectionClasses({ tableId: "metrics", row: 2, col: 3 }, "metrics", 2, 3), "cell-selected row-selected col-selected");
 assert.equal(getTableSelectionClasses({ tableId: "metrics", row: 2, col: 3 }, "metrics", 2, 1), "row-selected");
