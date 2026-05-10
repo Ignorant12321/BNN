@@ -27,6 +27,17 @@ def test_prepare_trial_config_disables_test_evaluation():
     assert config["evaluation"]["run_test"] is False
 
 
+def test_prepare_trial_config_disables_workers_on_windows():
+    """Windows CUDA tuning should avoid spawning extra DataLoader worker processes."""
+    config = prepare_trial_config(
+        {"model": {}, "training": {"num_workers": 2, "persistent_workers": True}},
+        platform="win32",
+    )
+
+    assert config["training"]["num_workers"] == 0
+    assert config["training"]["persistent_workers"] is False
+
+
 def test_merge_best_params_updates_model_and_training_values():
     """最佳参数应能并入正式训练配置。"""
     config = {

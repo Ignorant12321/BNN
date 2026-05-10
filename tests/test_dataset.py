@@ -1,10 +1,22 @@
 """滑动窗口与时间切分测试。"""
 
+import pickle
+
 import numpy as np
 import pandas as pd
+import pytest
 
-from src.dataset import build_time_splits, make_window_arrays
+from src.dataset import PVWindowDataset, build_time_splits, make_window_arrays
 from src.features import add_basic_features, split_feature_columns
+
+
+def _importorskip_torch_loadable() -> None:
+    try:
+        __import__("torch")
+    except ModuleNotFoundError:
+        pytest.skip("torch is not installed")
+    except OSError as exc:
+        pytest.skip(f"torch could not be loaded: {exc}")
 
 
 def _frame(n=40):
@@ -72,3 +84,13 @@ def test_build_time_splits_are_chronological():
 
     assert splits.train["DATE_TIME"].max() < splits.val["DATE_TIME"].min()
     assert splits.val["DATE_TIME"].max() < splits.test["DATE_TIME"].min()
+
+
+def test_pv_window_dataset_is_picklable_for_multiprocess_workers():
+    """Windows DataLoader workers need to pickle the dataset before spawning."""
+    _importorskip_torch_loadable()
+    df = _frame(12)
+    columns = split_feature_columns()
+    arrays = make_window_arrays(df, columns, lookback=4, horizon=3)
+
+    pickle.dumps(PVWindowDataset(arrays))

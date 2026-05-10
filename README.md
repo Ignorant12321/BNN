@@ -75,7 +75,11 @@ target : [t, ..., t + horizon - 1]
 即 8h 历史信息 -> 4h 预测结果
 ```
 
-需要注意：公开数据中的气象变量是实测气象，不是真实数值天气预报（NWP）。因此默认配置 `use_future_weather: false`，预测窗口内的天气输入使用最近观测气象的持久化值，避免把未来实测气象泄漏给模型。若后续接入真实 NWP，可再改为使用未来天气预报特征。
+这里的 8h 历史窗口不是固定要求模型必须依赖夜间功率，而是为每个预测起点提供足够的日内上下文。例如展示 `10:00-14:00` 这一组预测时，模型实际使用的是 `02:00-09:45` 的历史信息，目标窗口是 `10:00-13:45` 的 16 个 15 分钟预测点。历史窗口中凌晨功率接近 0 是正常物理现象，清晨启动、辐照度上升和温度变化仍然能帮助模型判断上午到中午的出力走势。
+
+4h 预测窗口适合作为超短期光伏概率预测任务：它比单步 15 分钟预测更能体现多步误差累积和不确定性变化，又不会在缺少真实 NWP 预报时把预测范围拉得过长。若需要论证窗口长度选择，可将 `lookback` 设置为 16、24、32 做消融实验，对比验证集 RMSE、PICP 和 PINAW。
+
+需要注意：公开数据中的气象变量是实测气象，不是真实数值天气预报（NWP）。配置项 `use_future_weather` 控制预测窗口天气输入的来源：设为 `false` 时使用最近观测气象的持久化值，更接近没有 NWP 时的真实部署场景；设为 `true` 时使用目标窗口内的气象序列，更适合作为已有气象信息条件下的对比实验。论文中需要明确说明所采用的设置，避免把未来实测气象误写成真实天气预报。
 
 ## 3. 特征设计
 
@@ -84,7 +88,7 @@ target : [t, ..., t + horizon - 1]
 | 分组 | 特征 | 作用 |
 | --- | --- | --- |
 | `history` | `AC_POWER`、`DC_POWER`、`IRRADIATION`、`AMBIENT_TEMPERATURE`、`MODULE_TEMPERATURE` | 表示过去 8 小时的出力和气象变化，输入 CNN 分支 |
-| `weather` | `IRRADIATION`、`AMBIENT_TEMPERATURE`、`MODULE_TEMPERATURE` | 表示预测窗口天气条件，默认使用最近观测值持久化 |
+| `weather` | `IRRADIATION`、`AMBIENT_TEMPERATURE`、`MODULE_TEMPERATURE` | 表示预测窗口天气条件，由 `use_future_weather` 控制使用目标窗口气象或最近观测持久化值 |
 | `time` | `hour_sin`、`hour_cos`、`dayofyear_sin`、`dayofyear_cos`、`month_sin`、`month_cos` | 表示日内、年内和月内周期性 |
 | `direct` | `last_ac_power`、`last_dc_power`、`last_irradiation` | 表示预测点前一时刻的强相关变量 |
 
@@ -235,25 +239,36 @@ data:
   val_ratio: 0.15
   lookback: 32
   horizon: 16
-  use_future_weather: false
+  use_future_weather: true
 
 model:
   name: improved_bnn
   hidden_dim: 256
-  branch_dim: 64
+  branch_dim: 32
   prior_sigma: 1.0
 
 training:
   device: auto
-  epochs: 80
-  batch_size: 64
-  lr: 0.00019544293665253097
+  epochs: 250
+  batch_size: 128
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  amp: true
+  cudnn_benchmark: true
+  lr: 0.0015414419590646007
   weight_decay: 0.0001
-  kl_beta: 1.2114960587728605e-05
-  patience: 12
+  kl_beta: 9.839179320060641e-05
+  patience: 20
 
 prediction:
-  mc_samples: 50
+  mc_samples: 30
+  plot:
+    prefer_daylight: true
+    daylight_threshold: 1.0
+    max_points: 160
+    start_time: "2020-06-13 10:00:00"
+    end_time: "2020-06-13 14:00:00"
 
 evaluation:
   run_test: true
@@ -452,13 +467,15 @@ outputs/improved_bnn/YYYYMMDD-HHMMSS/figures/loss_curve.png
 
 图中 `train` 曲线对应 `train_loss`，`val` 曲线对应 `val_loss`。一般来说，`train_loss` 反映模型对训练集的拟合情况，`val_loss` 反映模型在验证集上的泛化情况；本项目使用 `val_loss` 保存 `best_model.pt` 并触发 early stopping。
 
-默认画图时会优先避开测试集开头的夜间零功率区间，从第一个真实出力大于 `prediction.plot.daylight_threshold` 的位置开始展示。如果需要固定展示某段时间，可以在配置中设置：
+默认画图时会优先避开测试集开头的夜间零功率区间，从第一个真实出力大于 `prediction.plot.daylight_threshold` 的位置开始展示。夜间 0 点附近几乎没有光伏出力，适合保留在整体评估中，但不适合作为论文主图展示。
+
+当前主配置固定展示 `2020-06-13 10:00:00` 到 `2020-06-13 14:00:00`。这段时间避开了夜间零功率和清晨快速爬坡阶段，主要覆盖中午高出力区间，预测曲线和不确定性区间更稳定、更适合放入论文。代码会优先选取一个预测起点为 `10:00` 的完整 4h 窗口，因此实际 16 个目标点为 `10:00, 10:15, ..., 13:45`。
 
 ```yaml
 prediction:
   plot:
-    start_time: "2020-06-13 08:00:00"
-    end_time: "2020-06-13 12:00:00"
+    start_time: "2020-06-13 10:00:00"
+    end_time: "2020-06-13 14:00:00"
 ```
 
 ## 10. 配置文件说明
@@ -491,6 +508,11 @@ prediction:
 | `training.device` | 训练设备，`auto` 优先使用 CUDA |
 | `training.epochs` | 最大训练轮数 |
 | `training.batch_size` | batch 大小 |
+| `training.num_workers` | DataLoader 子进程数，用于加快数据读取和 batch 准备 |
+| `training.pin_memory` | CUDA 训练时锁页内存，加快 CPU 到 GPU 的数据搬运 |
+| `training.persistent_workers` | 保持 DataLoader worker 常驻，减少每个 epoch 的重启开销 |
+| `training.amp` | CUDA 自动混合精度，通常可降低显存占用并提升吞吐 |
+| `training.cudnn_benchmark` | 固定输入尺寸时让 cuDNN 自动选择更快算法 |
 | `training.lr` | AdamW 学习率 |
 | `training.weight_decay` | 权重衰减 |
 | `training.kl_beta` | KL 散度项权重 |
@@ -602,6 +624,27 @@ tuning:
 ```
 
 确认流程无误后，再恢复正式实验参数。
+
+### 12.5 GPU 利用率低
+
+Windows 任务管理器默认显示的可能是 `3D` 图，不一定能准确反映 PyTorch 的 CUDA 计算负载。可以在 GPU 图表标题处切换到 `CUDA` 或 `Compute_0`，也可以用：
+
+```bash
+nvidia-smi -l 1
+```
+
+当前配置已启用：
+
+```yaml
+training:
+  batch_size: 128
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  amp: true
+```
+
+这些设置可以减少 CPU 到 GPU 的等待时间，并用更大的 batch 提高 GPU 吞吐。若出现显存不足，优先把 `batch_size` 改回 `64`；若 Windows 下 DataLoader worker 启动异常，可把 `num_workers` 改回 `0`。
 
 ## 13. 论文写作参考
 

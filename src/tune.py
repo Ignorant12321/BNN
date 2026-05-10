@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -46,11 +47,15 @@ def main() -> None:
     print(f"Tuning results exported to: {export_dir}")
 
 
-def prepare_trial_config(base_config: dict) -> dict:
+def prepare_trial_config(base_config: dict, platform: str = sys.platform) -> dict:
     """复制基础配置，并让调参 trial 只评估验证集。"""
     config = copy.deepcopy(base_config)
     config.setdefault("evaluation", {})
     config["evaluation"]["run_test"] = False
+    if platform == "win32":
+        config.setdefault("training", {})
+        config["training"]["num_workers"] = 0
+        config["training"]["persistent_workers"] = False
     return config
 
 

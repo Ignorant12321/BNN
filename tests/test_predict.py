@@ -47,8 +47,34 @@ def test_select_prediction_plot_data_respects_explicit_time_range():
         end_time="2020-06-13 00:15:00",
     )
 
-    np.testing.assert_array_equal(view["y_true"], np.array([0.0, 0.0]))
-    assert view["reason"] == "configured_time_range"
+    np.testing.assert_array_equal(view["y_true"], np.array([0.0]))
+    assert view["reason"] == "configured_forecast_window"
+
+
+def test_select_prediction_plot_data_prefers_single_configured_forecast_window():
+    """固定展示时间段时，应优先展示一个完整预测窗口，避免混入重叠样本。"""
+    times = np.array(
+        [
+            ["2020-06-13T09:30:00", "2020-06-13T09:45:00", "2020-06-13T10:00:00", "2020-06-13T10:15:00"],
+            ["2020-06-13T10:00:00", "2020-06-13T10:15:00", "2020-06-13T10:30:00", "2020-06-13T10:45:00"],
+            ["2020-06-13T10:15:00", "2020-06-13T10:30:00", "2020-06-13T10:45:00", "2020-06-13T11:00:00"],
+        ],
+        dtype="datetime64[ns]",
+    )
+    y_true = np.array([[1.0, 2.0, 3.0, 4.0], [10.0, 11.0, 12.0, 13.0], [20.0, 21.0, 22.0, 23.0]])
+
+    view = select_prediction_plot_data(
+        times,
+        y_true,
+        y_true,
+        y_true,
+        y_true,
+        start_time="2020-06-13 10:00:00",
+        end_time="2020-06-13 11:00:00",
+    )
+
+    np.testing.assert_array_equal(view["y_true"], np.array([10.0, 11.0, 12.0, 13.0]))
+    assert view["reason"] == "configured_forecast_window"
 
 
 def test_select_prediction_plot_data_falls_back_when_no_daylight_exists():

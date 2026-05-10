@@ -188,10 +188,9 @@ class PVWindowDataset:
 
     def __init__(self, arrays: WindowArrays):
         try:
-            import torch
+            import torch  # noqa: F401
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError("PVWindowDataset requires torch. Install PyTorch first.") from exc
-        self.torch = torch
         self.arrays = arrays
 
     def __len__(self) -> int:
@@ -200,7 +199,8 @@ class PVWindowDataset:
 
     def __getitem__(self, idx: int):
         """返回一个训练样本，键名与模型 forward 中读取的键名一致。"""
-        torch = self.torch
+        import torch
+
         return {
             "history": torch.from_numpy(self.arrays.history[idx]),
             "weather": torch.from_numpy(self.arrays.weather[idx]),

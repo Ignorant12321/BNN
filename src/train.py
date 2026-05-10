@@ -104,9 +104,16 @@ def run_training(config: dict) -> Path:
     val_arrays = transform_windows(raw_val, scalers)
     test_arrays = transform_windows(raw_test, scalers)
 
-    train_loader = DataLoader(PVWindowDataset(train_arrays), batch_size=config["training"]["batch_size"], shuffle=True)
-    val_loader = DataLoader(PVWindowDataset(val_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
-    test_loader = DataLoader(PVWindowDataset(test_arrays), batch_size=config["training"]["batch_size"], shuffle=False)
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = bool(config["training"].get("cudnn_benchmark", True))
+
+    train_loader_kwargs = _build_loader_kwargs(config, device, shuffle=True)
+    eval_loader_kwargs = _build_loader_kwargs(config, device, shuffle=False)
+    if int(config["training"].get("num_workers", 0)) > 0 and train_loader_kwargs["num_workers"] == 0:
+        logger.warning("Windows CUDA detected; using num_workers=0 to avoid DataLoader workers reloading CUDA DLLs.")
+    train_loader = DataLoader(PVWindowDataset(train_arrays), **train_loader_kwargs)
+    val_loader = DataLoader(PVWindowDataset(val_arrays), **eval_loader_kwargs)
+    test_loader = DataLoader(PVWindowDataset(test_arrays), **eval_loader_kwargs)
 
     # 根据特征分组自动设置输入维度；配置文件控制隐藏层规模和先验方差。
     model = ImprovedBayesianPVNet(
@@ -120,6 +127,16 @@ def run_training(config: dict) -> Path:
         prior_sigma=config["model"]["prior_sigma"],
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"], weight_decay=config["training"]["weight_decay"])
+    amp_enabled = _amp_enabled(config, device)
+    grad_scaler = _create_grad_scaler(amp_enabled)
+    non_blocking = bool(config["training"].get("pin_memory", device.type == "cuda")) and device.type == "cuda"
+    logger.info(
+        "Runtime options: batch_size=%s, num_workers=%s, pin_memory=%s, amp=%s",
+        train_loader_kwargs["batch_size"],
+        train_loader_kwargs["num_workers"],
+        train_loader_kwargs["pin_memory"],
+        amp_enabled,
+    )
 
     # 记录最优验证损失，用于保存 best_model.pt 和 early stopping。
     best_val = float("inf")
@@ -129,8 +146,24 @@ def run_training(config: dict) -> Path:
     stale_epochs = 0
 
     for epoch in range(1, config["training"]["epochs"] + 1):
-        train_loss = _train_epoch(model, train_loader, optimizer, device, beta=config["training"]["kl_beta"])
-        val_loss = _eval_loss(model, val_loader, device, beta=config["training"]["kl_beta"])
+        train_loss = _train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            device,
+            beta=config["training"]["kl_beta"],
+            amp_enabled=amp_enabled,
+            grad_scaler=grad_scaler,
+            non_blocking=non_blocking,
+        )
+        val_loss = _eval_loss(
+            model,
+            val_loader,
+            device,
+            beta=config["training"]["kl_beta"],
+            amp_enabled=amp_enabled,
+            non_blocking=non_blocking,
+        )
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         logger.info("epoch=%03d train_loss=%.6f val_loss=%.6f", epoch, train_loss, val_loss)
@@ -217,25 +250,72 @@ def run_training(config: dict) -> Path:
     return run_dir
 
 
-def _train_epoch(model, loader, optimizer, device, beta: float) -> float:
+def _build_loader_kwargs(config: dict, device, shuffle: bool, platform: str | None = None) -> dict:
+    """根据配置生成 DataLoader 参数。"""
+    training = config.get("training", {})
+    num_workers = int(training.get("num_workers", 0))
+    platform_name = sys.platform if platform is None else platform
+    if (
+        platform_name.startswith("win")
+        and device.type == "cuda"
+        and num_workers > 0
+        and not bool(training.get("allow_windows_cuda_workers", False))
+    ):
+        num_workers = 0
+    pin_memory = bool(training.get("pin_memory", device.type == "cuda")) and device.type == "cuda"
+    kwargs = {
+        "batch_size": int(training["batch_size"]),
+        "shuffle": shuffle,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(training.get("persistent_workers", True))
+    return kwargs
+
+
+def _amp_enabled(config: dict, device) -> bool:
+    """只在 CUDA 设备上启用自动混合精度。"""
+    return bool(config.get("training", {}).get("amp", False)) and device.type == "cuda"
+
+
+def _create_grad_scaler(enabled: bool):
+    """兼容不同 PyTorch 版本创建 GradScaler。"""
+    import torch
+
+    try:
+        return torch.amp.GradScaler("cuda", enabled=enabled)
+    except TypeError:
+        return torch.cuda.amp.GradScaler(enabled=enabled)
+
+
+def _train_epoch(model, loader, optimizer, device, beta: float, amp_enabled: bool = False, grad_scaler=None, non_blocking: bool = False) -> float:
     """训练一个 epoch，并返回平均 loss。"""
+    import torch
+
     model.train()
     losses = []
     for batch in loader:
         # DataLoader 返回的每个 batch 是一个字典，所有张量都搬到同一设备。
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device, non_blocking=non_blocking) for k, v in batch.items()}
         target = batch.pop("target")
         optimizer.zero_grad(set_to_none=True)
-        mean, log_var = model(batch)
-        # ELBO = Gaussian NLL + beta * KL。KL 来自所有贝叶斯层。
-        loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
-        loss.backward()
-        optimizer.step()
+        with torch.autocast(device_type=device.type, enabled=amp_enabled):
+            mean, log_var = model(batch)
+            # ELBO = Gaussian NLL + beta * KL。KL 来自所有贝叶斯层。
+            loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
+        if amp_enabled and grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+            grad_scaler.step(optimizer)
+            grad_scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         losses.append(float(loss.detach().cpu()))
     return float(np.mean(losses))
 
 
-def _eval_loss(model, loader, device, beta: float) -> float:
+def _eval_loss(model, loader, device, beta: float, amp_enabled: bool = False, non_blocking: bool = False) -> float:
     """在验证集上计算平均 loss，不更新参数。"""
     import torch
 
@@ -243,10 +323,11 @@ def _eval_loss(model, loader, device, beta: float) -> float:
     losses = []
     with torch.no_grad():
         for batch in loader:
-            batch = {k: v.to(device) for k, v in batch.items()}
+            batch = {k: v.to(device, non_blocking=non_blocking) for k, v in batch.items()}
             target = batch.pop("target")
-            mean, log_var = model(batch)
-            loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
+            with torch.autocast(device_type=device.type, enabled=amp_enabled):
+                mean, log_var = model(batch)
+                loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
             losses.append(float(loss.detach().cpu()))
     return float(np.mean(losses))
 

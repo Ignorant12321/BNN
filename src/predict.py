@@ -97,11 +97,26 @@ def select_prediction_plot_data(
     大段零功率，不利于观察模型对日间波动的预测能力。本函数提供两种选择
     方式：
 
-    1. 配置了 start_time/end_time 时，优先选择该目标时间段。
+    1. 配置了 start_time/end_time 时，优先选择从 start_time 开始的单个预测窗口。
     2. 未配置时间段时，默认从第一个真实出力大于 daylight_threshold 的点开始。
 
-    如果指定时间段没有命中，或测试集没有日间出力，则回退到前 max_points 个点。
+    单个预测窗口使用半开区间 [start_time, end_time)，例如 10:00-14:00
+    对应 16 个 15 分钟目标点。若没有命中完整窗口，则回退到展平后的目标
+    时间段选择；如果测试集没有日间出力，则回退到前 max_points 个点。
     """
+    configured_window = _slice_configured_forecast_window(
+        target_times,
+        y_true,
+        mean,
+        lower,
+        upper,
+        start_time=start_time,
+        end_time=end_time,
+        max_points=max_points,
+    )
+    if configured_window is not None:
+        return configured_window
+
     flat_times = pd.to_datetime(np.asarray(target_times).reshape(-1))
     flat_true = np.asarray(y_true).reshape(-1)
     flat_mean = np.asarray(mean).reshape(-1)
@@ -151,6 +166,46 @@ def select_prediction_plot_data(
         np.arange(end),
         "fallback_first_points",
     )
+
+
+def _slice_configured_forecast_window(
+    target_times: np.ndarray,
+    y_true: np.ndarray,
+    mean: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    start_time: str | None,
+    end_time: str | None,
+    max_points: int,
+) -> dict[str, np.ndarray | str] | None:
+    """优先切出一个从 start_time 开始的完整多步预测窗口。"""
+    if not start_time or np.asarray(target_times).ndim != 2:
+        return None
+
+    shape = np.asarray(target_times).shape
+    times = pd.to_datetime(np.asarray(target_times).reshape(-1)).to_numpy().reshape(shape)
+    start = pd.Timestamp(start_time).to_datetime64()
+    end = pd.Timestamp(end_time).to_datetime64() if end_time else None
+
+    for row_idx, row_times in enumerate(times):
+        if len(row_times) == 0 or row_times[0] != start:
+            continue
+        mask = row_times >= start
+        if end is not None:
+            # 对单个预测窗口使用半开区间，10:00-14:00 对应 16 个 15 分钟点。
+            mask &= row_times < end
+        indices = np.flatnonzero(mask)[:max_points]
+        if len(indices) == 0:
+            return None
+        return {
+            "times": row_times[indices],
+            "y_true": np.asarray(y_true)[row_idx, indices],
+            "mean": np.asarray(mean)[row_idx, indices],
+            "lower": np.asarray(lower)[row_idx, indices],
+            "upper": np.asarray(upper)[row_idx, indices],
+            "reason": "configured_forecast_window",
+        }
+    return None
 
 
 def _slice_prediction_view(

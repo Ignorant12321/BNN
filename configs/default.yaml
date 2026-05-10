@@ -12,22 +12,29 @@ data:
 model:
   name: improved_bnn
   hidden_dim: 256
-  branch_dim: 32
+  branch_dim: 64
   prior_sigma: 1.0
 training:
   device: auto
-  epochs: 250
-  batch_size: 64
-  lr: 0.0015414419590646007
+  epochs: 300
+  batch_size: 128
+  num_workers: 0
+  pin_memory: true
+  persistent_workers: false
+  amp: true
+  cudnn_benchmark: true
+  lr: 0.0007621948724043314
   weight_decay: 0.0001
-  kl_beta: 9.839179320060641e-05
-  patience: 20
+  kl_beta: 1.0053915983841731e-05
+  patience: 30
 prediction:
   mc_samples: 30
   plot:
     prefer_daylight: true
     daylight_threshold: 1.0
     max_points: 160
+    start_time: "2020-06-13 10:00:00"
+    end_time: "2020-06-13 14:00:00"
 tuning:
   n_trials: 20
 evaluation:
