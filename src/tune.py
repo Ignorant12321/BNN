@@ -26,10 +26,11 @@ def main() -> None:
     import optuna
 
     base = load_config("configs/tuning.yaml")
+    run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     def objective(trial):
         """单个 trial 的目标函数。"""
-        config = prepare_trial_config(base)
+        config = prepare_trial_config(base, tuning_run_name=run_name)
         # 模型容量相关参数。
         config["model"]["hidden_dim"] = trial.suggest_categorical("hidden_dim", [64, 128, 256])
         config["model"]["branch_dim"] = trial.suggest_categorical("branch_dim", [32, 64, 128])
@@ -43,13 +44,15 @@ def main() -> None:
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=base["tuning"]["n_trials"])
     print(study.best_params)
-    export_dir = export_study_results(study, base)
+    export_dir = export_study_results(study, base, run_name=run_name)
     print(f"Tuning results exported to: {export_dir}")
 
 
-def prepare_trial_config(base_config: dict, platform: str = sys.platform) -> dict:
+def prepare_trial_config(base_config: dict, platform: str = sys.platform, tuning_run_name: str | None = None) -> dict:
     """复制基础配置，并让调参 trial 只评估验证集。"""
     config = copy.deepcopy(base_config)
+    if tuning_run_name is not None:
+        config["output_dir"] = str(Path(base_config["output_dir"]) / "tuning" / tuning_run_name)
     config.setdefault("evaluation", {})
     config["evaluation"]["run_test"] = False
     if platform == "win32":

@@ -6,7 +6,7 @@
 2. scaler 只在训练集上 fit，再用于验证集和测试集 transform。
 
 窗口形式为：过去 `lookback` 步作为历史输入，未来 `horizon` 步作为预测目标。
-当前默认配置是过去 32 个 15 分钟点预测未来 16 个 15 分钟点，即 8h -> 4h。
+当前默认配置是过去 16 个 15 分钟点预测未来 16 个 15 分钟点，即 4h -> 4h。
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class WindowArrays:
 
     history: [样本数, lookback, 历史特征数]
     weather: [样本数, horizon, 天气特征数]
-    time: [样本数, horizon, 时间特征数]
+    time: [样本数, horizon, 时间特征数]，当前模型不再单独使用该分支，保留为空数组兼容旧接口
     direct: [样本数, 直接输入特征数]
     target: [样本数, horizon]
     """
@@ -82,12 +82,13 @@ def make_window_arrays(
     """把连续时间序列转换成监督学习样本。
 
     对于起点 start：
-    - history 使用 [start, start + lookback)。
-    - target/time 使用 [start + lookback, start + lookback + horizon)。
-    - weather 默认使用 history 最后一个时刻并在 horizon 内持久化，避免未来实测气象泄漏。
+    - history 使用 [start, start + lookback)，当前只包含 AC_POWER。
+    - target/weather 使用 [start + lookback, start + lookback + horizon)。
+    - weather 表示可由 NWP 获得的未来天气序列；当前公开数据中用真实天气代替。
     - direct 使用 history 的最后一个时刻，即 start + lookback - 1。
 
-    如果已接入真实数值天气预报，可设置 use_future_weather=True 使用目标窗口天气特征。
+    use_future_weather 是旧配置项，为兼容历史配置保留；新语义下天气序列始终
+    与预测窗口对齐。
     """
     if lookback <= 0 or horizon <= 0:
         raise ValueError("lookback and horizon must be positive")
@@ -114,16 +115,10 @@ def make_window_arrays(
         target_end = hist_end + horizon
         # 历史序列输入给 CNN 分支，保留二维结构 [time, feature]。
         history.append(ordered.iloc[start:hist_end][columns.history].to_numpy(dtype=np.float32))
-        # 默认没有真实 NWP 时，不能使用目标窗口内的实测天气；用最近观测值做持久化基线。
-        if use_future_weather:
-            weather_window = ordered.iloc[hist_end:target_end][columns.weather].to_numpy(dtype=np.float32)
-        else:
-            last_weather = ordered.iloc[[hist_end - 1]][columns.weather].to_numpy(dtype=np.float32)
-            weather_window = np.repeat(last_weather, repeats=horizon, axis=0)
-        weather.append(weather_window)
-        # 时间特征由目标时间戳确定，不属于未来观测泄漏。
+        weather.append(ordered.iloc[hist_end:target_end][columns.weather].to_numpy(dtype=np.float32))
+        # 当前模型把 hour 放进 weather 分支；time 保留为空数组，避免破坏旧工件格式。
         time_features.append(ordered.iloc[hist_end:target_end][columns.time].to_numpy(dtype=np.float32))
-        # direct 分支只取预测点前一时刻，模拟论文中的“直接输入部分”。
+        # direct 分支只取预测点前一时刻，不能取预测点或预测点之后的数据。
         direct.append(ordered.iloc[hist_end - 1][columns.direct].to_numpy(dtype=np.float32))
         target.append(ordered.iloc[hist_end:target_end][columns.target].to_numpy(dtype=np.float32))
         target_times.append(ordered.iloc[hist_end:target_end]["DATE_TIME"].to_numpy())
@@ -155,7 +150,10 @@ def fit_scalers(train: WindowArrays) -> dict[str, StandardScaler]:
     }
     scalers["history"].fit(train.history.reshape(-1, train.history.shape[-1]))
     scalers["weather"].fit(train.weather.reshape(-1, train.weather.shape[-1]))
-    scalers["time"].fit(train.time.reshape(-1, train.time.shape[-1]))
+    if train.time.shape[-1] > 0:
+        scalers["time"].fit(train.time.reshape(-1, train.time.shape[-1]))
+    else:
+        scalers["time"] = None
     scalers["direct"].fit(train.direct)
     scalers["target"].fit(train.target.reshape(-1, 1))
     return scalers
@@ -165,7 +163,10 @@ def transform_windows(windows: WindowArrays, scalers: dict[str, StandardScaler])
     """使用训练集 scaler 标准化窗口数组。"""
     history = scalers["history"].transform(windows.history.reshape(-1, windows.history.shape[-1])).reshape(windows.history.shape)
     weather = scalers["weather"].transform(windows.weather.reshape(-1, windows.weather.shape[-1])).reshape(windows.weather.shape)
-    time_features = scalers["time"].transform(windows.time.reshape(-1, windows.time.shape[-1])).reshape(windows.time.shape)
+    if windows.time.shape[-1] > 0 and scalers.get("time") is not None:
+        time_features = scalers["time"].transform(windows.time.reshape(-1, windows.time.shape[-1])).reshape(windows.time.shape)
+    else:
+        time_features = windows.time.copy()
     direct = scalers["direct"].transform(windows.direct)
     target = scalers["target"].transform(windows.target.reshape(-1, 1)).reshape(windows.target.shape)
     return WindowArrays(

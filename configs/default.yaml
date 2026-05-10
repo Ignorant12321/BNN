@@ -3,12 +3,12 @@ output_dir: outputs
 data:
   generation_path: dataset/Plant_1_Generation_Data.csv
   weather_path: dataset/Plant_1_Weather_Sensor_Data.csv
+  processed_dir: data/processed
   fill_missing: true
   train_ratio: 0.7
   val_ratio: 0.15
-  lookback: 32
+  lookback: 16
   horizon: 16
-  use_future_weather: true
 model:
   name: improved_bnn
   hidden_dim: 256
@@ -16,7 +16,7 @@ model:
   prior_sigma: 1.0
 training:
   device: auto
-  epochs: 300
+  epochs: 350
   batch_size: 128
   num_workers: 0
   pin_memory: true

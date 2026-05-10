@@ -47,30 +47,28 @@ def test_make_window_arrays_uses_past_history_and_future_targets():
     assert arrays.time.shape == (24, 3, len(columns.time))
     assert arrays.direct.shape == (24, len(columns.direct))
     assert arrays.target.shape == (24, 3)
+    np.testing.assert_array_equal(arrays.history[0, :, 0], np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32))
+    np.testing.assert_array_equal(arrays.direct[0], np.array([3.0], dtype=np.float32))
     np.testing.assert_array_equal(arrays.target[0], np.array([4.0, 5.0, 6.0]))
 
 
-def test_make_window_arrays_uses_weather_persistence_by_default():
-    """默认不能把目标窗口内的未来实测气象作为模型输入。"""
+def test_make_window_arrays_uses_forecast_weather_window_by_default():
+    """天气分支应使用预测窗口天气序列，当前用真实天气模拟 NWP。"""
     df = _frame(12)
     columns = split_feature_columns()
 
     arrays = make_window_arrays(df, columns, lookback=4, horizon=3)
 
-    expected = np.repeat(
-        df.iloc[[3]][columns.weather].to_numpy(dtype=np.float32),
-        repeats=3,
-        axis=0,
-    )
+    expected = df.iloc[4:7][columns.weather].to_numpy(dtype=np.float32)
     np.testing.assert_array_equal(arrays.weather[0], expected)
 
 
-def test_make_window_arrays_can_use_future_weather_when_nwp_available():
-    """若接入真实 NWP，可显式使用预测窗口天气特征。"""
+def test_make_window_arrays_weather_flag_is_backward_compatible():
+    """历史配置中的 use_future_weather 标志不应改变新的 NWP 语义。"""
     df = _frame(12)
     columns = split_feature_columns()
 
-    arrays = make_window_arrays(df, columns, lookback=4, horizon=3, use_future_weather=True)
+    arrays = make_window_arrays(df, columns, lookback=4, horizon=3, use_future_weather=False)
 
     expected = df.iloc[4:7][columns.weather].to_numpy(dtype=np.float32)
     np.testing.assert_array_equal(arrays.weather[0], expected)

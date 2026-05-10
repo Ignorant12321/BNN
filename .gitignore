@@ -13,6 +13,7 @@ outputs/*/*/
 !outputs/.gitkeep
 !outputs/improved_bnn/
 !outputs/improved_bnn/.gitkeep
+data/processed/
 
 *.pt
 *.pth

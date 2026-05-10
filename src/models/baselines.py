@@ -9,7 +9,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from src.models.branches import HistoryCNNBranch, SequenceMLPBranch
+from src.models.branches import ForecastWeatherMLPBranch, HistoryCNNBranch
 
 
 class MLPBaseline(nn.Module):
@@ -48,18 +48,17 @@ class CNNBaseline(nn.Module):
 
 
 class CNNMLPBaseline(nn.Module):
-    """CNN 历史分支 + MLP 天气/时间分支的确定性基线。"""
+    """CNN 历史分支 + MLP 天气分支的确定性基线。"""
 
-    def __init__(self, history_features: int, weather_features: int, time_features: int, horizon: int, hidden_dim: int = 64):
+    def __init__(self, history_features: int, weather_features: int, horizon: int, hidden_dim: int = 64):
         super().__init__()
         self.history = HistoryCNNBranch(history_features, hidden_dim=hidden_dim, out_dim=hidden_dim)
-        self.weather = SequenceMLPBranch(weather_features, horizon, hidden_dim=hidden_dim, out_dim=hidden_dim)
-        self.time = SequenceMLPBranch(time_features, horizon, hidden_dim=hidden_dim, out_dim=hidden_dim)
-        self.head = nn.Sequential(nn.Linear(hidden_dim * 3, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, horizon))
+        self.weather = ForecastWeatherMLPBranch(weather_features, horizon, out_dim=hidden_dim)
+        self.head = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, horizon))
 
     def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         """拼接历史、天气和时间分支表示后输出点预测。"""
-        z = torch.cat([self.history(batch["history"]), self.weather(batch["weather"]), self.time(batch["time"])], dim=-1)
+        z = torch.cat([self.history(batch["history"]), self.weather(batch["weather"])], dim=-1)
         return self.head(z)
 
 
@@ -70,10 +69,10 @@ class MCDropoutPVNet(CNNMLPBaseline):
     BayesianLinear 的不确定性建模效果做对比。
     """
 
-    def __init__(self, history_features: int, weather_features: int, time_features: int, horizon: int, hidden_dim: int = 64, dropout: float = 0.2):
-        super().__init__(history_features, weather_features, time_features, horizon, hidden_dim)
+    def __init__(self, history_features: int, weather_features: int, horizon: int, hidden_dim: int = 64, dropout: float = 0.2):
+        super().__init__(history_features, weather_features, horizon, hidden_dim)
         self.head = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),

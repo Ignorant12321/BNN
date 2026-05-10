@@ -4,12 +4,12 @@ output_dir: outputs
 data:
   generation_path: dataset/Plant_1_Generation_Data.csv
   weather_path: dataset/Plant_1_Weather_Sensor_Data.csv
+  processed_dir: data/processed
   fill_missing: true
   train_ratio: 0.7
   val_ratio: 0.15
-  lookback: 32
+  lookback: 16
   horizon: 16
-  use_future_weather: true
 
 model:
   name: improved_bnn

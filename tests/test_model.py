@@ -11,18 +11,16 @@ def test_improved_bnn_forward_shapes_and_kl():
     from src.models.improved_bnn import ImprovedBayesianPVNet
 
     model = ImprovedBayesianPVNet(
-        history_features=5,
-        weather_features=3,
-        time_features=6,
-        direct_features=3,
+        history_features=1,
+        weather_features=4,
+        direct_features=1,
         horizon=16,
         hidden_dim=32,
     )
     batch = {
-        "history": torch.randn(4, 96, 5),
-        "weather": torch.randn(4, 16, 3),
-        "time": torch.randn(4, 16, 6),
-        "direct": torch.randn(4, 3),
+        "history": torch.randn(4, 16, 1),
+        "weather": torch.randn(4, 16, 4),
+        "direct": torch.randn(4, 1),
     }
 
     mean, log_var = model(batch)

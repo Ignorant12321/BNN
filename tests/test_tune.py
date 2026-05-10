@@ -27,6 +27,16 @@ def test_prepare_trial_config_disables_test_evaluation():
     assert config["evaluation"]["run_test"] is False
 
 
+def test_prepare_trial_config_routes_trial_outputs_to_tuning_run(tmp_path):
+    """Optuna trial 输出应放到对应调参会话目录，避免污染正式训练目录。"""
+    config = prepare_trial_config(
+        {"output_dir": str(tmp_path), "model": {}, "training": {}},
+        tuning_run_name="fixed",
+    )
+
+    assert config["output_dir"] == str(tmp_path / "tuning" / "fixed")
+
+
 def test_prepare_trial_config_disables_workers_on_windows():
     """Windows CUDA tuning should avoid spawning extra DataLoader worker processes."""
     config = prepare_trial_config(

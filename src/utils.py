@@ -77,12 +77,13 @@ def describe_device(device, cuda_available: bool | None = None, cuda_name: str |
     return ", ".join(parts)
 
 
-def create_run_dir(base_dir: str | Path, model_name: str) -> Path:
+def create_run_dir(base_dir: str | Path, model_name: str, note: str | None = None) -> Path:
     """创建一次实验的输出目录。"""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path(base_dir) / model_name / timestamp
     for child in ["checkpoints", "metrics", "figures", "predictions", "logs", "artifacts"]:
         (run_dir / child).mkdir(parents=True, exist_ok=True)
+    (run_dir / "note.txt").write_text(note or timestamp, encoding="utf-8")
     return run_dir
 
 

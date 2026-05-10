@@ -17,12 +17,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 # 允许两种运行方式都能找到 `src` 包：
 # 1. 推荐方式：python -m src.train
@@ -30,21 +28,13 @@ import pandas as pd
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.data import load_plant_dataframe
-from src.dataset import PVWindowDataset, build_time_splits, fit_scalers, make_window_arrays, transform_windows
-from src.evaluate import evaluate_predictions
-from src.features import add_basic_features, split_feature_columns
+from src.dataset import PVWindowDataset, fit_scalers, make_window_arrays, transform_windows
+from src.evaluation_pipeline import build_model, evaluate_loaded_model, load_or_build_splits, save_artifacts
+from src.features import split_feature_columns
 from src.losses import elbo_loss
-from src.metrics import horizon_metrics
-from src.models.improved_bnn import ImprovedBayesianPVNet
-from src.predict import interval_from_mean_std, mc_predict, select_prediction_plot_data
-from src.utils import create_run_dir, describe_device, resolve_device, save_config, save_json, save_pickle, set_seed, setup_logger
+from src.utils import create_run_dir, describe_device, resolve_device, save_config, set_seed, setup_logger
 from src.visualization import (
-    plot_calibration_curve,
-    plot_horizon_rmse,
     plot_loss_curve,
-    plot_picp_pinaw,
-    plot_prediction_interval,
 )
 
 
@@ -52,11 +42,15 @@ def main() -> None:
     """命令行入口。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
+    parser.add_argument("--note", default=None, help="备注本次实验；不填时 note.txt 默认为时间戳")
     args = parser.parse_args()
 
     from src.utils import load_config
 
     config = load_config(args.config)
+    if args.note is not None:
+        config.setdefault("experiment", {})
+        config["experiment"]["note"] = args.note
     run_training(config)
 
 
@@ -76,33 +70,25 @@ def run_training(config: dict) -> Path:
     set_seed(config["seed"])
     device = resolve_device(config["training"]["device"])
     # 每次训练都会创建独立目录，避免覆盖历史实验结果。
-    run_dir = create_run_dir(config["output_dir"], config["model"]["name"])
+    run_note = config.get("experiment", {}).get("note")
+    run_dir = create_run_dir(config["output_dir"], config["model"]["name"], note=run_note)
     logger = setup_logger(run_dir / "logs" / "train.log")
     save_config(config, run_dir / "config.yaml")
     logger.info("Device status: %s", describe_device(device))
 
-    # 读取并预处理数据。这里得到的是电站级时间序列，而不是单个逆变器序列。
-    df = load_plant_dataframe(
-        config["data"]["generation_path"],
-        config["data"]["weather_path"],
-        fill_missing=config["data"].get("fill_missing", True),
-    )
-    df = add_basic_features(df)
     columns = split_feature_columns()
-    # 先切分再构造窗口，避免训练窗口跨越到验证/测试时间段。
-    splits = build_time_splits(df, config["data"]["train_ratio"], config["data"]["val_ratio"])
+    # 优先使用 prepare_data 生成的固定切分；不存在时保留原始即席清洗流程。
+    splits = load_or_build_splits(config)
     lookback = config["data"]["lookback"]
     horizon = config["data"]["horizon"]
     use_future_weather = config["data"].get("use_future_weather", False)
 
     raw_train = make_window_arrays(splits.train, columns, lookback, horizon, use_future_weather=use_future_weather)
     raw_val = make_window_arrays(splits.val, columns, lookback, horizon, use_future_weather=use_future_weather)
-    raw_test = make_window_arrays(splits.test, columns, lookback, horizon, use_future_weather=use_future_weather)
     # scaler 只在训练集 fit，这是防止数据泄漏的重要步骤。
     scalers = fit_scalers(raw_train)
     train_arrays = transform_windows(raw_train, scalers)
     val_arrays = transform_windows(raw_val, scalers)
-    test_arrays = transform_windows(raw_test, scalers)
 
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = bool(config["training"].get("cudnn_benchmark", True))
@@ -113,19 +99,9 @@ def run_training(config: dict) -> Path:
         logger.warning("Windows CUDA detected; using num_workers=0 to avoid DataLoader workers reloading CUDA DLLs.")
     train_loader = DataLoader(PVWindowDataset(train_arrays), **train_loader_kwargs)
     val_loader = DataLoader(PVWindowDataset(val_arrays), **eval_loader_kwargs)
-    test_loader = DataLoader(PVWindowDataset(test_arrays), **eval_loader_kwargs)
 
-    # 根据特征分组自动设置输入维度；配置文件控制隐藏层规模和先验方差。
-    model = ImprovedBayesianPVNet(
-        history_features=len(columns.history),
-        weather_features=len(columns.weather),
-        time_features=len(columns.time),
-        direct_features=len(columns.direct),
-        horizon=horizon,
-        hidden_dim=config["model"]["hidden_dim"],
-        branch_dim=config["model"]["branch_dim"],
-        prior_sigma=config["model"]["prior_sigma"],
-    ).to(device)
+    # 根据特征分组自动设置输入维度；当前模型使用 history/weather/direct 三路输入。
+    model = build_model(config, columns, device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"], weight_decay=config["training"]["weight_decay"])
     amp_enabled = _amp_enabled(config, device)
     grad_scaler = _create_grad_scaler(amp_enabled)
@@ -182,70 +158,15 @@ def run_training(config: dict) -> Path:
     checkpoint = torch.load(run_dir / "checkpoints" / "best_model.pt", map_location=device)
     model.load_state_dict(checkpoint["model_state"])
 
-    val_outputs = _predict_in_original_scale(model, val_loader, device, scalers, config["prediction"]["mc_samples"])
-    validation_metrics = evaluate_predictions(*val_outputs)
     # 保存表格类结果。
-    save_json(validation_metrics, run_dir / "metrics" / "validation_metrics.json")
     plot_loss_curve(train_losses, val_losses, run_dir / "figures" / "loss_curve.png")
-    _save_artifacts(run_dir, columns, scalers, splits)
+    save_artifacts(run_dir, columns, scalers, splits)
+    evaluate_loaded_model(model, config, scalers, splits, device, "val", run_dir)
     if not config.get("evaluation", {}).get("run_test", True):
         logger.info("validation-only run complete: %s", run_dir)
         return run_dir
 
-    target, mean, std, samples = _predict_in_original_scale(model, test_loader, device, scalers, config["prediction"]["mc_samples"])
-    metrics = evaluate_predictions(target, mean, std, samples)
-    save_json(metrics, run_dir / "metrics" / "metrics.json")
-    pd.DataFrame(horizon_metrics(target, mean)).to_csv(run_dir / "metrics" / "point_metrics.csv", index=False)
-    pd.DataFrame([metrics]).to_csv(run_dir / "metrics" / "probabilistic_metrics.csv", index=False)
-    _save_predictions(run_dir, raw_test.target_times, target, mean, std, samples)
-    # 保存论文中常用的可视化图。
-    lower90, upper90 = interval_from_mean_std(mean, std, 0.90)
-    lower95, upper95 = interval_from_mean_std(mean, std, 0.95)
-    plot_config = config.get("prediction", {}).get("plot", {})
-    view90 = select_prediction_plot_data(
-        raw_test.target_times,
-        target,
-        mean,
-        lower90,
-        upper90,
-        start_time=plot_config.get("start_time"),
-        end_time=plot_config.get("end_time"),
-        prefer_daylight=plot_config.get("prefer_daylight", True),
-        daylight_threshold=plot_config.get("daylight_threshold", 1.0),
-        max_points=plot_config.get("max_points", 160),
-    )
-    view95 = select_prediction_plot_data(
-        raw_test.target_times,
-        target,
-        mean,
-        lower95,
-        upper95,
-        start_time=plot_config.get("start_time"),
-        end_time=plot_config.get("end_time"),
-        prefer_daylight=plot_config.get("prefer_daylight", True),
-        daylight_threshold=plot_config.get("daylight_threshold", 1.0),
-        max_points=plot_config.get("max_points", 160),
-    )
-    logger.info("prediction interval plot selection: %s", view90["reason"])
-    plot_prediction_interval(
-        view90["y_true"],
-        view90["mean"],
-        view90["lower"],
-        view90["upper"],
-        run_dir / "figures" / "prediction_interval_90.png",
-        times=view90["times"],
-    )
-    plot_prediction_interval(
-        view95["y_true"],
-        view95["mean"],
-        view95["lower"],
-        view95["upper"],
-        run_dir / "figures" / "prediction_interval_95.png",
-        times=view95["times"],
-    )
-    plot_horizon_rmse(target, mean, run_dir / "figures" / "horizon_rmse.png")
-    plot_picp_pinaw(target, {"90%": (lower90, upper90), "95%": (lower95, upper95)}, run_dir / "figures" / "picp_pinaw.png")
-    plot_calibration_curve(target, mean, std, run_dir / "figures" / "calibration_curve.png")
+    evaluate_loaded_model(model, config, scalers, splits, device, "test", run_dir)
     logger.info("run complete: %s", run_dir)
     return run_dir
 
@@ -330,57 +251,6 @@ def _eval_loss(model, loader, device, beta: float, amp_enabled: bool = False, no
                 loss = elbo_loss(mean, log_var, target, model.kl_loss(), beta=beta, num_batches=len(loader))
             losses.append(float(loss.detach().cpu()))
     return float(np.mean(losses))
-
-
-def _inverse_target(values: np.ndarray, scaler) -> np.ndarray:
-    """把标准化后的目标值恢复到原始 AC_POWER 尺度。"""
-    return scaler.inverse_transform(values.reshape(-1, 1)).reshape(values.shape)
-
-
-def _predict_in_original_scale(model, loader, device, scalers, mc_samples: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """执行 MC 推理并把目标、均值、标准差恢复到真实功率尺度。"""
-    pred = mc_predict(model, loader, device, mc_samples=mc_samples)
-    target = _inverse_target(pred["target"], scalers["target"])
-    mean = _inverse_target(pred["mean"], scalers["target"])
-    std = pred["std"] * float(scalers["target"].scale_[0])
-    samples = np.stack([_inverse_target(s, scalers["target"]) for s in pred["samples"]], axis=0)
-    return target, mean, std, samples
-
-
-def _save_predictions(run_dir: Path, target_times: np.ndarray, target: np.ndarray, mean: np.ndarray, std: np.ndarray, samples: np.ndarray) -> None:
-    """保存测试集逐样本、逐 horizon 的预测结果。"""
-    rows = []
-    for i in range(target.shape[0]):
-        for h in range(target.shape[1]):
-            rows.append(
-                {
-                    "sample": i,
-                    "horizon": h + 1,
-                    "target_time": str(target_times[i, h]),
-                    "y_true": target[i, h],
-                    "y_mean": mean[i, h],
-                    "y_std": std[i, h],
-                }
-            )
-    pd.DataFrame(rows).to_csv(run_dir / "predictions" / "test_predictions.csv", index=False)
-    np.save(run_dir / "predictions" / "uncertainty_samples.npy", samples)
-
-
-def _save_artifacts(run_dir: Path, columns, scalers, splits) -> None:
-    """保存复现实验所需的工件。"""
-    save_pickle(scalers["history"], run_dir / "artifacts" / "scaler_x.pkl")
-    save_pickle(scalers["target"], run_dir / "artifacts" / "scaler_y.pkl")
-    save_pickle(scalers, run_dir / "artifacts" / "all_scalers.pkl")
-    save_json(columns.__dict__, run_dir / "artifacts" / "feature_columns.json")
-    split_info = {
-        "train_start": str(splits.train["DATE_TIME"].min()),
-        "train_end": str(splits.train["DATE_TIME"].max()),
-        "val_start": str(splits.val["DATE_TIME"].min()),
-        "val_end": str(splits.val["DATE_TIME"].max()),
-        "test_start": str(splits.test["DATE_TIME"].min()),
-        "test_end": str(splits.test["DATE_TIME"].max()),
-    }
-    save_json(split_info, run_dir / "artifacts" / "split_info.json")
 
 
 if __name__ == "__main__":

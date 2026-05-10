@@ -4,10 +4,9 @@
 
 history -> 1D-CNN
 weather -> MLP
-time    -> MLP
-direct  -> MLP
+direct  -> raw previous-step AC_POWER
 
-四个分支的输出拼接后进入 BayesianLinear 层。模型最终输出两个张量：
+三路输入的表示拼接后进入 BayesianLinear 层。模型最终输出两个张量：
 
 - mean: 未来 horizon 步的预测均值。
 - log_var: 未来 horizon 步的对数方差，用于描述数据噪声不确定性。
@@ -20,7 +19,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from src.models.bayesian_layers import BayesianLinear
-from src.models.branches import DirectInputBranch, HistoryCNNBranch, SequenceMLPBranch
+from src.models.branches import ForecastWeatherMLPBranch, HistoryCNNBranch
 
 
 class ImprovedBayesianPVNet(nn.Module):
@@ -30,7 +29,6 @@ class ImprovedBayesianPVNet(nn.Module):
         self,
         history_features: int,
         weather_features: int,
-        time_features: int,
         direct_features: int,
         horizon: int,
         hidden_dim: int = 128,
@@ -45,11 +43,9 @@ class ImprovedBayesianPVNet(nn.Module):
         super().__init__()
         self.horizon = horizon
         self.history_branch = HistoryCNNBranch(history_features, hidden_dim=branch_dim, out_dim=branch_dim)
-        self.weather_branch = SequenceMLPBranch(weather_features, horizon=horizon, hidden_dim=hidden_dim, out_dim=branch_dim)
-        self.time_branch = SequenceMLPBranch(time_features, horizon=horizon, hidden_dim=hidden_dim, out_dim=branch_dim)
-        self.direct_branch = DirectInputBranch(direct_features, hidden_dim=branch_dim, out_dim=branch_dim // 2)
-        # 三个主要分支各输出 branch_dim，direct 分支输出一半维度，拼接后进入概率层。
-        fusion_dim = branch_dim * 3 + branch_dim // 2
+        self.weather_branch = ForecastWeatherMLPBranch(weather_features, horizon=horizon, out_dim=branch_dim)
+        # direct 分支按论文图作为第三部分输入，直接把 t-1 的 AC_POWER 拼入融合层。
+        fusion_dim = branch_dim * 2 + direct_features
         self.bayes1 = BayesianLinear(fusion_dim, hidden_dim, prior_sigma=prior_sigma)
         self.bayes2 = BayesianLinear(hidden_dim, hidden_dim, prior_sigma=prior_sigma)
         self.mean_head = BayesianLinear(hidden_dim, horizon, prior_sigma=prior_sigma)
@@ -58,15 +54,17 @@ class ImprovedBayesianPVNet(nn.Module):
     def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """执行一次前向传播。
 
-        batch 必须包含 history/weather/time/direct 四个键。返回值的 shape 均为
+        batch 必须包含 history/weather/direct 三个键。返回值的 shape 均为
         [batch, horizon]。
         """
+        direct = batch["direct"]
+        if direct.ndim == 1:
+            direct = direct.unsqueeze(-1)
         z = torch.cat(
             [
                 self.history_branch(batch["history"]),
                 self.weather_branch(batch["weather"]),
-                self.time_branch(batch["time"]),
-                self.direct_branch(batch["direct"]),
+                direct,
             ],
             dim=-1,
         )

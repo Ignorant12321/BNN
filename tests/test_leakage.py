@@ -8,7 +8,7 @@ from src.features import add_basic_features, split_feature_columns
 
 
 def test_window_timestamps_do_not_put_future_values_in_history():
-    """历史窗口最后时刻必须早于目标窗口第一时刻。"""
+    """history 和 direct 都只能取预测点前的数据。"""
     n = 24
     df = pd.DataFrame(
         {
@@ -24,4 +24,5 @@ def test_window_timestamps_do_not_put_future_values_in_history():
 
     assert arrays.history_end_times[0] < arrays.target_times[0][0]
     assert arrays.history[0, -1, 0] == 5.0
+    assert arrays.direct[0, 0] == 5.0
     assert arrays.target[0, 0] == 6.0
