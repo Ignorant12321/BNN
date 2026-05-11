@@ -14,8 +14,8 @@ from urllib.parse import unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
 HIDDEN_RUNS_FILE = ROOT / "hidden-runs.json"
-RUN_NOTES_FILE = ROOT / "run-notes.json"
 
 
 def normalize_run_path(value: Any) -> str:
@@ -26,17 +26,6 @@ def normalize_run_paths(values: Any) -> list[str]:
     if not isinstance(values, list):
         return []
     return sorted({path for path in (normalize_run_path(value) for value in values) if path})
-
-
-def normalize_run_notes(notes: Any) -> dict[str, str]:
-    if not isinstance(notes, dict):
-        return {}
-    normalized = {
-        normalize_run_path(path): str(note if note is not None else "")
-        for path, note in notes.items()
-        if normalize_run_path(path)
-    }
-    return dict(sorted(normalized.items()))
 
 
 def read_json(path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +47,30 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     temp_path.replace(path)
 
 
+def resolve_run_note_path(relative_path: Any, project_root: Path = PROJECT_ROOT) -> Path:
+    run_path = normalize_run_path(relative_path)
+    if not run_path:
+        raise ValueError("Run path is required")
+
+    root = project_root.resolve()
+    note_path = (root / run_path / "note.txt").resolve()
+    if note_path != root and root not in note_path.parents:
+        raise ValueError("Run note path must stay inside the project")
+    return note_path
+
+
+def write_run_note(relative_path: Any, note: Any, project_root: Path = PROJECT_ROOT) -> Path:
+    note_path = resolve_run_note_path(relative_path, project_root=project_root)
+    if not note_path.parent.is_dir():
+        raise FileNotFoundError(f"Run directory does not exist: {note_path.parent}")
+
+    text = str(note if note is not None else "")
+    if text and not text.endswith("\n"):
+        text = f"{text}\n"
+    note_path.write_text(text, encoding="utf-8")
+    return note_path
+
+
 class VisualizerHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -67,10 +80,6 @@ class VisualizerHandler(SimpleHTTPRequestHandler):
         if pathname == "/api/hidden-runs":
             payload = read_json(HIDDEN_RUNS_FILE, {"hiddenRuns": []})
             self.send_json(HTTPStatus.OK, {"hiddenRuns": normalize_run_paths(payload.get("hiddenRuns"))})
-            return
-        if pathname == "/api/run-notes":
-            payload = read_json(RUN_NOTES_FILE, {"notes": {}})
-            self.send_json(HTTPStatus.OK, {"notes": normalize_run_notes(payload.get("notes"))})
             return
         super().do_GET()
 
@@ -82,11 +91,20 @@ class VisualizerHandler(SimpleHTTPRequestHandler):
             write_json(HIDDEN_RUNS_FILE, next_payload)
             self.send_json(HTTPStatus.OK, next_payload)
             return
-        if pathname == "/api/run-notes":
+        if pathname == "/api/run-note":
             payload = self.read_request_json()
-            next_payload = {"notes": normalize_run_notes(payload.get("notes"))}
-            write_json(RUN_NOTES_FILE, next_payload)
-            self.send_json(HTTPStatus.OK, next_payload)
+            try:
+                note_path = write_run_note(payload.get("relativePath"), payload.get("note"))
+            except (FileNotFoundError, ValueError) as error:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                return
+            self.send_json(
+                HTTPStatus.OK,
+                {
+                    "relativePath": normalize_run_path(payload.get("relativePath")),
+                    "notePath": str(note_path.relative_to(PROJECT_ROOT).as_posix()),
+                },
+            )
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 

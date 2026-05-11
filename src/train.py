@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -37,6 +40,12 @@ from src.utils import create_run_dir, describe_device, resolve_device, save_conf
 from src.visualization import (
     plot_loss_curve,
 )
+
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_PURPLE = "\033[35m"
+ANSI_BLUE = "\033[34m"
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 
 
 def main() -> None:
@@ -73,7 +82,7 @@ def run_training(config: dict) -> Path:
     # 每次训练都会创建独立目录，避免覆盖历史实验结果。
     run_note = config.get("experiment", {}).get("note")
     run_dir = create_run_dir(config["output_dir"], config["model"]["name"], note=run_note)
-    logger = setup_logger(run_dir / "logs" / "train.log")
+    logger = setup_logger(run_dir / "logs" / "train.log", stream_formatter=TrainingConsoleFormatter(LOG_FORMAT))
     training_started_at = time.perf_counter()
     save_config(config, run_dir / "config.yaml")
     logger.info("Device status: %s", describe_device(device))
@@ -203,6 +212,16 @@ def run_training(config: dict) -> Path:
     return run_dir
 
 
+class TrainingConsoleFormatter(logging.Formatter):
+    """只给控制台训练日志加少量颜色，不影响 train.log 文件内容。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        console_record = copy.copy(record)
+        console_record.msg = _color_training_log_message(record.getMessage())
+        console_record.args = ()
+        return super().format(console_record)
+
+
 def _log_training_summary(logger, **summary_kwargs) -> None:
     """把训练结束摘要逐行追加到 train.log。"""
     for line in _build_training_summary_lines(**summary_kwargs):
@@ -272,6 +291,40 @@ def _format_core_metrics(metrics: dict[str, float]) -> str:
         if isinstance(value, int | float | np.number):
             parts.append(f"{key}={float(value):.6f}")
     return " ".join(parts)
+
+
+def _color_training_log_message(message: str) -> str:
+    """给训练控制台日志做克制分区着色。"""
+    if message == "Training Summary":
+        return _color(message, ANSI_GREEN)
+    if message.startswith("Runtime options:"):
+        return _highlight_key_values(message, ["batch_size", "num_workers", "pin_memory", "amp"], ANSI_BLUE)
+    if message.startswith("epoch="):
+        colored = _highlight_key_values(message, ["epoch"], ANSI_GREEN)
+        return _highlight_key_values(colored, ["train_loss", "val_loss"], ANSI_PURPLE)
+    if message.startswith("completed_epochs="):
+        colored = _highlight_key_values(message, ["completed_epochs", "best_epoch", "early_stopping_epoch"], ANSI_GREEN)
+        return _highlight_key_values(colored, ["best_val_loss"], ANSI_PURPLE)
+    if message.startswith("final_train_loss=") or message.startswith("final_val_loss="):
+        return _color(message, ANSI_PURPLE)
+    if message.startswith("validation_metrics=") or message.startswith("test_metrics="):
+        return _highlight_key_values(
+            message,
+            ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"],
+            ANSI_PURPLE,
+        )
+    return message
+
+
+def _highlight_key_values(message: str, keys: list[str], color_code: str) -> str:
+    """高亮 key=value 片段，保持其余日志默认色。"""
+    key_pattern = "|".join(re.escape(key) for key in keys)
+    return re.sub(rf"(?<![\w])((?:{key_pattern})=[^,\s]+)", lambda match: _color(match.group(1), color_code), message)
+
+
+def _color(text: str, code: str) -> str:
+    """添加 ANSI 颜色，不使用红色。"""
+    return f"{code}{text}{ANSI_RESET}"
 
 
 def _build_loader_kwargs(config: dict, device, shuffle: bool, platform: str | None = None) -> dict:

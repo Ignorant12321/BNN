@@ -250,7 +250,7 @@ pytest -q
 python visualizer/server.py
 ```
 
-打开终端输出的地址后，取消勾选的 run 会保存到 `visualizer/hidden-runs.json`，侧栏备注会保存到 `visualizer/run-notes.json`。再次打开可视化并添加实验文件夹时，这些记录会自动恢复。
+打开终端输出的地址后，取消勾选的 run 会保存到 `visualizer/hidden-runs.json`，侧栏备注会写回对应 run 目录下的 `note.txt`。再次打开可视化并添加实验文件夹时，这些记录会自动恢复。
 
 推荐工作流：
 
@@ -324,6 +324,22 @@ python -m src.apply_tuning --objective crps
 python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json
 python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json --dry-run
 ```
+
+如果已经完成了一轮调参，但想在不重新训练的情况下改用另一个验证集指标选择 trial，
+可以查询同一轮 tuning 会话中的所有 `validation_metrics.json`：
+
+```bash
+python -m src.select_tuning --source latest --show
+python -m src.select_tuning --source latest --metric rmse --dry-run
+python -m src.select_tuning --source latest --metric rmse --apply
+python -m src.apply_tuning --objective rmse
+```
+
+`--show` 会列出常用验证指标各自最优的 trial。`--metric` 会按指定指标选择数值最小的
+trial，并先展示该 trial 的验证指标和将写入 tuning 会话摘要的变化。
+`src.select_tuning --apply` 只更新该 tuning 会话里的 `best_params.json` 和 `best_config.yaml`，
+不会直接修改 `configs/default.yaml`。确认 `best_params.json` 已切到目标指标后，再用
+`python -m src.apply_tuning --objective <metric>` 迁移到正式训练配置。
 
 ## 输出
 

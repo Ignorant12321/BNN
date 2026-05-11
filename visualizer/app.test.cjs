@@ -9,6 +9,7 @@ const {
   groupFiguresByName,
   getLightboxItemsForGroup,
   getMetricDatasetGroups,
+  getMetricKeys,
   filterRunsBySearch,
   getBestRunForMetric,
   getRunNoteStorageKey,
@@ -60,6 +61,7 @@ assert.deepEqual(
 
 assert.equal(formatValue(0.00019544293665253097), "0.000195");
 assert.equal(formatValue(undefined), "-");
+assert.equal(getMetricKeys().includes("crps"), true);
 
 assert.equal(getRunNoteStorageKey("outputs/improved_bnn/20260510-193755"), "bnnVisualizer.note.outputs/improved_bnn/20260510-193755");
 assert.equal(
@@ -107,11 +109,7 @@ assert.deepEqual(updateHiddenRunPaths(["outputs/b/20260509-223920"], "outputs/b/
   "outputs/b/20260510-193755",
 ]);
 assert.deepEqual(updateHiddenRunPaths(["outputs/b/20260510-193755"], "outputs/b/20260510-193755", true), []);
-assert.equal(getRunNoteFromSources("outputs/b/20260510-193755", "note from file\n", {}), "note from file");
-assert.equal(
-  getRunNoteFromSources("outputs/b/20260510-193755", "note from file", { "outputs/b/20260510-193755": "note from service" }),
-  "note from service",
-);
+assert.equal(getRunNoteFromSources("outputs/b/20260510-193755", "note from file\n"), "note from file");
 
 assert.equal(getTableSelectionClasses({ tableId: "metrics", row: 2, col: 3 }, "metrics", 2, 3), "cell-selected row-selected col-selected");
 assert.equal(getTableSelectionClasses({ tableId: "metrics", row: 2, col: 3 }, "metrics", 2, 1), "row-selected");

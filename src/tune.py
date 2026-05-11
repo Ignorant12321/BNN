@@ -23,12 +23,17 @@ from src.utils import load_config, save_config, save_json
 
 
 METRIC_ORDER = ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_PURPLE = "\033[35m"
+ANSI_BLUE = "\033[34m"
 
 
 def main() -> None:
     """执行 Optuna 超参数搜索。"""
     import optuna
 
+    configure_optuna_logging(optuna)
     base = load_config("configs/tuning.yaml")
     run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
     objective_metric = resolve_objective_metric(base)
@@ -39,7 +44,7 @@ def main() -> None:
         trial_started_at = time.perf_counter()
         config = prepare_trial_config(base, tuning_run_name=run_name)
         apply_trial_suggestions(config, trial)
-        print(format_trial_config(trial.number, config), flush=True)
+        print(format_trial_config(trial.number, config, color=True), flush=True)
         run_dir = run_training(config)
         metrics = load_validation_metrics(run_dir)
         print(
@@ -49,6 +54,7 @@ def main() -> None:
                 metrics,
                 objective_metric,
                 elapsed_seconds=time.perf_counter() - trial_started_at,
+                color=True,
             ),
             flush=True,
         )
@@ -58,7 +64,11 @@ def main() -> None:
     study = create_tuning_study(optuna, base)
     n_trials = count_remaining_trials(study, target_n_trials=base["tuning"]["n_trials"])
     if n_trials > 0:
-        study.optimize(objective, n_trials=n_trials)
+        study.optimize(
+            objective,
+            n_trials=n_trials,
+            callbacks=[lambda study, trial: print(format_optuna_trial_log(study, trial, color=True), flush=True)],
+        )
     else:
         print(f"Study already has {len(study.trials)} trials; skipping optimization.")
     export_dir = export_study_results(study, base, run_name=run_name)
@@ -68,6 +78,7 @@ def main() -> None:
             export_dir,
             objective_metric=objective_metric,
             elapsed_seconds=time.perf_counter() - tuning_started_at,
+            color=True,
         )
     )
 
@@ -103,6 +114,12 @@ def create_tuning_study(optuna_module, base_config: dict):
         kwargs["load_if_exists"] = tuning_config.get("load_if_exists", True)
 
     return optuna_module.create_study(**kwargs)
+
+
+def configure_optuna_logging(optuna_module) -> None:
+    """关闭 Optuna 默认 INFO 单行日志，避免挤在格式化摘要中间。"""
+    optuna_module.logging.set_verbosity(optuna_module.logging.WARNING)
+    optuna_module.logging.disable_default_handler()
 
 
 def ensure_sqlite_storage_parent(storage: str) -> None:
@@ -156,18 +173,19 @@ def apply_trial_suggestions(config: dict, trial) -> None:
     )
 
 
-def format_trial_config(trial_number: int, config: dict) -> str:
+def format_trial_config(trial_number: int, config: dict, color: bool = False) -> str:
     """生成 trial 开始前的参数摘要，避免控制台输出挤成一行。"""
     model = config.get("model", {})
     training = config.get("training", {})
+    trial_label = _color(f"Optuna Trial {trial_number + 1}", ANSI_GREEN, color)
     lines = [
         "",
-        f"========== Optuna Trial {trial_number + 1} ==========",
-        "Sampled params:",
-        f"  hidden_dim: {_format_value(model.get('hidden_dim'))}",
-        f"  branch_dim: {_format_value(model.get('branch_dim'))}",
-        f"  lr: {_format_value(training.get('lr'))}",
-        f"  kl_beta: {_format_value(training.get('kl_beta'))}",
+        f"========== {trial_label} ==========",
+        _color("Sampled params:", ANSI_BLUE, color),
+        _color(f"  hidden_dim: {_format_value(model.get('hidden_dim'))}", ANSI_BLUE, color),
+        _color(f"  branch_dim: {_format_value(model.get('branch_dim'))}", ANSI_BLUE, color),
+        _color(f"  lr: {_format_value(training.get('lr'))}", ANSI_BLUE, color),
+        _color(f"  kl_beta: {_format_value(training.get('kl_beta'))}", ANSI_BLUE, color),
         "Training options:",
         f"  epochs: {_format_value(training.get('epochs'))}",
         f"  patience: {_format_value(training.get('patience'))}",
@@ -182,17 +200,19 @@ def format_trial_result(
     metrics: dict[str, float],
     objective_metric: str,
     elapsed_seconds: float,
+    color: bool = False,
 ) -> str:
     """生成单个 trial 结束后的摘要。"""
+    trial_label = _color(f"Optuna Trial {trial_number + 1}", ANSI_GREEN, color)
     lines = [
         "",
-        f"========== Optuna Trial {trial_number + 1} Complete ==========",
+        f"========== {trial_label} Complete ==========",
         f"elapsed_time: {format_duration(elapsed_seconds)}",
-        f"objective_metric: {objective_metric}",
-        f"objective_value: {_format_metric(metrics[objective_metric])}",
-        "Validation metrics:",
+        _color(f"objective_metric: {objective_metric}", ANSI_PURPLE, color),
+        _color(f"objective_value: {_format_metric(metrics[objective_metric])}", ANSI_PURPLE, color),
+        _color("Validation metrics:", ANSI_PURPLE, color),
     ]
-    lines.extend(format_metric_lines(metrics))
+    lines.extend(format_metric_lines(metrics, color=color))
     lines.extend(
         [
             f"run_dir: {run_dir}",
@@ -207,6 +227,7 @@ def format_study_summary(
     export_dir: str | Path,
     objective_metric: str = "rmse",
     elapsed_seconds: float | None = None,
+    color: bool = False,
 ) -> str:
     """生成调参结束摘要，多行展示 best trial 和 best params。"""
     lines = [
@@ -217,17 +238,17 @@ def format_study_summary(
         lines.append(f"elapsed_time: {format_duration(elapsed_seconds)}")
     lines.extend(
         [
-            f"objective_metric: {objective_metric}",
+            _color(f"objective_metric: {objective_metric}", ANSI_PURPLE, color),
             "",
-        "Best trial:",
-        f"  number: {study.best_trial.number + 1}",
-        f"  value: {_format_value(study.best_value)}",
-        "",
-        "Best params:",
+            "Best trial:",
+            _color(f"  number: {study.best_trial.number + 1}", ANSI_GREEN, color),
+            _color(f"  value: {_format_value(study.best_value)}", ANSI_PURPLE, color),
+            "",
+            _color("Best params:", ANSI_BLUE, color),
         ]
     )
     for name, value in study.best_params.items():
-        lines.append(f"  {name}: {_format_value(value)}")
+        lines.append(_color(f"  {name}: {_format_value(value)}", ANSI_BLUE, color))
     lines.extend(
         [
             "",
@@ -238,16 +259,34 @@ def format_study_summary(
     return "\n".join(lines)
 
 
-def format_metric_lines(metrics: dict[str, float]) -> list[str]:
+def format_optuna_trial_log(study, trial, color: bool = False) -> str:
+    """生成替代 Optuna 默认 INFO 的 trial 完成摘要。"""
+    trial_label = _color(f"Optuna Trial {trial.number + 1}", ANSI_GREEN, color)
+    lines = [
+        "",
+        f"========== {trial_label} Finished ==========",
+        _color(f"value: {_format_value(trial.value)}", ANSI_PURPLE, color),
+        "Best trial:",
+        _color(f"  number: {study.best_trial.number + 1}", ANSI_GREEN, color),
+        _color(f"  value: {_format_value(study.best_value)}", ANSI_PURPLE, color),
+        _color("Params:", ANSI_BLUE, color),
+    ]
+    for name, value in trial.params.items():
+        lines.append(_color(f"  {name}: {_format_value(value)}", ANSI_BLUE, color))
+    lines.append("============================================")
+    return "\n".join(lines)
+
+
+def format_metric_lines(metrics: dict[str, float], color: bool = False) -> list[str]:
     """按固定顺序格式化验证集指标。"""
     lines = []
     for key in METRIC_ORDER:
         if key in metrics:
-            lines.append(f"  {key}: {_format_metric(metrics[key])}")
+            lines.append(_color(f"  {key}: {_format_metric(metrics[key])}", ANSI_PURPLE, color))
     for key in sorted(set(metrics) - set(METRIC_ORDER)):
         value = metrics[key]
         if isinstance(value, int | float):
-            lines.append(f"  {key}: {_format_metric(value)}")
+            lines.append(_color(f"  {key}: {_format_metric(value)}", ANSI_PURPLE, color))
     return lines
 
 
@@ -267,6 +306,13 @@ def _format_value(value) -> str:
 def _format_metric(value: float) -> str:
     """统一格式化控制台里的指标值。"""
     return f"{float(value):.6f}"
+
+
+def _color(text: str, code: str, enabled: bool) -> str:
+    """按需添加 ANSI 颜色，默认保持纯文本，便于测试和日志复用。"""
+    if not enabled:
+        return text
+    return f"{code}{text}{ANSI_RESET}"
 
 
 def merge_best_params(base_config: dict, best_params: dict) -> dict:

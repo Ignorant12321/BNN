@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.train import _amp_enabled, _build_loader_kwargs, _build_training_summary_lines
+from src.train import _amp_enabled, _build_loader_kwargs, _build_training_summary_lines, _color_training_log_message
 
 
 def test_build_loader_kwargs_enables_cuda_input_pipeline_options() -> None:
@@ -108,3 +108,28 @@ def test_build_training_summary_lines_includes_duration_status_and_metrics(tmp_p
     assert "final_train_loss=0.400000" in text
     assert "validation_metrics=metrics/validation_metrics.json rmse=10.123456 mae=5.500000 picp_90=0.910000" in text
     assert "test_metrics=metrics/metrics.json rmse=11.200000 mae=6.000000 picp_90=0.880000" in text
+
+
+def test_color_training_log_message_highlights_epochs_losses_and_options() -> None:
+    """训练控制台日志应克制地突出 epoch、loss 和运行参数。"""
+    epoch_text = _color_training_log_message("epoch=003 train_loss=1.234567 val_loss=0.987654")
+    options_text = _color_training_log_message("Runtime options: batch_size=128, num_workers=0, pin_memory=False, amp=True")
+    summary_text = _color_training_log_message(
+        "completed_epochs=12/20 best_epoch=9 best_val_loss=0.123457 early_stopping_epoch=none"
+    )
+
+    assert "\033[32mepoch=003\033[0m" in epoch_text
+    assert "\033[35mtrain_loss=1.234567\033[0m" in epoch_text
+    assert "\033[35mval_loss=0.987654\033[0m" in epoch_text
+    assert "\033[34mbatch_size=128\033[0m" in options_text
+    assert "\033[34mamp=True\033[0m" in options_text
+    assert "\033[32mcompleted_epochs=12/20\033[0m" in summary_text
+    assert "\033[35mbest_val_loss=0.123457\033[0m" in summary_text
+    assert "\033[31m" not in epoch_text + options_text + summary_text
+
+
+def test_color_training_log_message_leaves_plain_logs_uncolored() -> None:
+    """设备和 run_dir 等普通日志保持默认控制台颜色。"""
+    text = _color_training_log_message("Device status: device=cpu, cuda_available=False")
+
+    assert text == "Device status: device=cpu, cuda_available=False"

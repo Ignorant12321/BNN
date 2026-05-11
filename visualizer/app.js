@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  const METRIC_KEYS = ["mae", "rmse", "nrmse", "smape", "nll", "picp_90", "pinaw_90", "picp_95", "pinaw_95"];
+  const METRIC_KEYS = ["mae", "rmse", "nrmse", "smape", "crps", "nll", "picp_90", "pinaw_90", "picp_95", "pinaw_95"];
   const TIMESTAMP_RE = /^\d{8}-\d{6}$/;
   const FIGURE_ORDER = [
     "loss_curve.png",
@@ -33,7 +33,6 @@
     },
     persistence: {
       hiddenRunPaths: [],
-      runNotes: {},
       serverAvailable: false,
     },
     toastTimer: null,
@@ -103,20 +102,7 @@
     return [...next].sort();
   }
 
-  function normalizeRunNotes(notes) {
-    if (!notes || typeof notes !== "object" || Array.isArray(notes)) return {};
-    return Object.fromEntries(
-      Object.entries(notes)
-        .map(([path, note]) => [normalizePath(path), String(note ?? "")])
-        .filter(([path]) => path)
-        .sort(([left], [right]) => left.localeCompare(right)),
-    );
-  }
-
-  function getRunNoteFromSources(relativePath, fileNote = "", persistedNotes = {}) {
-    const key = normalizePath(relativePath);
-    const notes = normalizeRunNotes(persistedNotes);
-    if (Object.hasOwn(notes, key)) return notes[key];
+  function getRunNoteFromSources(relativePath, fileNote = "") {
     return String(fileNote || "").trim();
   }
 
@@ -285,6 +271,10 @@
     ];
   }
 
+  function getMetricKeys() {
+    return [...METRIC_KEYS];
+  }
+
   function filterRunsBySearch(runs, query) {
     const normalized = String(query || "").trim().toLowerCase();
     if (!normalized) return runs;
@@ -363,16 +353,11 @@
 
   async function loadPersistenceState() {
     try {
-      const [hiddenPayload, notesPayload] = await Promise.all([
-        fetchJson("/api/hidden-runs", { hiddenRuns: [] }),
-        fetchJson("/api/run-notes", { notes: {} }),
-      ]);
+      const hiddenPayload = await fetchJson("/api/hidden-runs", { hiddenRuns: [] });
       state.persistence.hiddenRunPaths = normalizeRunPaths(hiddenPayload.hiddenRuns);
-      state.persistence.runNotes = normalizeRunNotes(notesPayload.notes);
       state.persistence.serverAvailable = true;
     } catch {
       state.persistence.hiddenRunPaths = getStoredHiddenRunPaths();
-      state.persistence.runNotes = {};
       state.persistence.serverAvailable = false;
     }
   }
@@ -385,11 +370,9 @@
     await putJson("/api/hidden-runs", { hiddenRuns: normalized });
   }
 
-  async function saveRunNotes(notes) {
-    const normalized = normalizeRunNotes(notes);
-    state.persistence.runNotes = normalized;
+  async function saveRunNote(relativePath, note) {
     if (!state.persistence.serverAvailable) return;
-    await putJson("/api/run-notes", { notes: normalized });
+    await putJson("/api/run-note", { relativePath: normalizePath(relativePath), note: String(note ?? "") });
   }
 
   function reportPersistenceError(error) {
@@ -431,8 +414,8 @@
       pointMetrics: pointMetricsText ? parseCsv(pointMetricsText) : [],
       figures,
       note: state.persistence.serverAvailable
-        ? getRunNoteFromSources(item.relativePath, noteText, state.persistence.runNotes)
-        : getStoredRunNote(item.relativePath, getRunNoteFromSources(item.relativePath, noteText, state.persistence.runNotes)),
+        ? getRunNoteFromSources(item.relativePath, noteText)
+        : getStoredRunNote(item.relativePath, getRunNoteFromSources(item.relativePath, noteText)),
     };
   }
 
@@ -1141,8 +1124,7 @@
       if (!run) return;
       run.note = event.target.value;
       storeRunNote(run.relativePath, run.note);
-      state.persistence.runNotes[normalizePath(run.relativePath)] = run.note;
-      saveRunNotes(state.persistence.runNotes).catch(reportPersistenceError);
+      saveRunNote(run.relativePath, run.note).catch(reportPersistenceError);
     });
 
     document.querySelector(".content").addEventListener("click", (event) => {
@@ -1202,6 +1184,7 @@
     getBestRunForMetric,
     getTableSelectionClasses,
     getMetricDatasetGroups,
+    getMetricKeys,
     getMetricScore,
     getRunNoteStorageKey,
     getRunNoteFromSources,

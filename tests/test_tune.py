@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pandas as pd
@@ -193,6 +194,25 @@ def test_format_trial_config_prints_one_based_trial_number_and_sampled_params():
     )
 
 
+def test_format_trial_config_can_color_trial_number_and_params():
+    """彩色控制台输出应只突出 trial 编号和参数区域。"""
+    signature = inspect.signature(format_trial_config)
+    assert "color" in signature.parameters, "format_trial_config should accept a color flag"
+
+    config = {
+        "model": {"hidden_dim": 256, "branch_dim": 128},
+        "training": {"lr": 0.0018259913257430906, "kl_beta": 1.7099712671569545e-05, "epochs": 150, "patience": 15},
+    }
+
+    text = format_trial_config(0, config, color=True)
+
+    assert "\033[32mOptuna Trial 1\033[0m" in text
+    assert "\033[34mSampled params:\033[0m" in text
+    assert "\033[34m  hidden_dim: 256\033[0m" in text
+    assert "\033[34m  kl_beta: 1.7099712671569545e-05\033[0m" in text
+    assert "\033[31m" not in text
+
+
 def test_format_duration_uses_hh_mm_ss():
     """调参和训练摘要使用同一种耗时格式。"""
     assert format_duration(3723.4) == "01:02:03"
@@ -230,6 +250,28 @@ def test_format_trial_result_prints_duration_objective_and_metrics(tmp_path):
         f"run_dir: {tmp_path / 'trial-run'}\n"
         "=============================================="
     )
+
+
+def test_format_trial_result_can_color_trial_number_and_metrics(tmp_path):
+    """Trial 结果摘要应让指标区域用紫色，但不使用红色。"""
+    signature = inspect.signature(format_trial_result)
+    assert "color" in signature.parameters, "format_trial_result should accept a color flag"
+    metrics = {"rmse": 10.123456, "crps": 0.25}
+
+    text = format_trial_result(
+        trial_number=0,
+        run_dir=tmp_path / "trial-run",
+        metrics=metrics,
+        objective_metric="crps",
+        elapsed_seconds=65.4,
+        color=True,
+    )
+
+    assert "\033[32mOptuna Trial 1\033[0m" in text
+    assert "\033[35mobjective_metric: crps\033[0m" in text
+    assert "\033[35m  rmse: 10.123456\033[0m" in text
+    assert "\033[35m  crps: 0.250000\033[0m" in text
+    assert "\033[31m" not in text
 
 
 def test_format_study_summary_prints_best_params_on_multiple_lines(tmp_path):
@@ -271,6 +313,63 @@ def test_format_study_summary_prints_best_params_on_multiple_lines(tmp_path):
         "\nTuning results exported to:\n"
         f"  {tmp_path / 'tuning' / 'fixed'}"
     )
+
+
+def test_format_optuna_trial_log_prints_best_trial_and_params_with_color():
+    """替代 Optuna 默认单行日志的摘要应分区着色。"""
+    assert hasattr(tune, "format_optuna_trial_log"), "missing formatted Optuna trial log helper"
+
+    class FakeFrozenTrial:
+        number = 0
+        value = 600.5989660198786
+        params = {
+            "hidden_dim": 128,
+            "branch_dim": 256,
+            "lr": 0.0022497849788863807,
+            "kl_beta": 0.00014479268325065474,
+        }
+
+    class FakeStudy:
+        best_value = 600.5989660198786
+
+        class BestTrial:
+            number = 0
+
+        best_trial = BestTrial()
+
+    text = tune.format_optuna_trial_log(FakeStudy(), FakeFrozenTrial(), color=True)
+
+    assert "\033[32mOptuna Trial 1\033[0m" in text
+    assert "\033[35mvalue: 600.5989660198786\033[0m" in text
+    assert "\033[32m  number: 1\033[0m" in text
+    assert "\033[34mParams:\033[0m" in text
+    assert "\033[34m  lr: 0.0022497849788863807\033[0m" in text
+    assert "\033[31m" not in text
+
+
+def test_configure_optuna_logging_suppresses_default_info_logs():
+    """Optuna 自带的一行 INFO 日志应关闭，避免和格式化输出重复。"""
+    assert hasattr(tune, "configure_optuna_logging"), "missing Optuna logging configuration helper"
+
+    calls = []
+
+    class FakeLogging:
+        WARNING = "WARNING"
+
+        @staticmethod
+        def set_verbosity(level):
+            calls.append(("set_verbosity", level))
+
+        @staticmethod
+        def disable_default_handler():
+            calls.append(("disable_default_handler",))
+
+    class FakeOptuna:
+        logging = FakeLogging
+
+    tune.configure_optuna_logging(FakeOptuna)
+
+    assert calls == [("set_verbosity", "WARNING"), ("disable_default_handler",)]
 
 
 def test_merge_best_params_updates_model_and_training_values():

@@ -188,3 +188,36 @@ def test_apply_tuning_cli_uses_config_objective_for_latest_source(tmp_path):
     assert f"Source: {crps_dir / 'best_params.json'}" in result.stdout
     assert "Objective: crps" in result.stdout
     assert yaml.safe_load(target_path.read_text(encoding="utf-8"))["training"]["lr"] == 0.002
+
+
+def test_apply_tuning_cli_reports_missing_objective_without_traceback(tmp_path):
+    tuning_dir = tmp_path / "tuning"
+    crps_dir = tuning_dir / "20260510-110000"
+    crps_dir.mkdir(parents=True)
+    (crps_dir / "best_params.json").write_text(
+        json.dumps({"objective_metric": "crps", "best_params": {"lr": 0.002}}),
+        encoding="utf-8",
+    )
+    target_path = tmp_path / "default.yaml"
+    target_path.write_text(yaml.safe_dump({"training": {"lr": 0.01}}, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.apply_tuning",
+            "--tuning-dir",
+            str(tuning_dir),
+            "--objective",
+            "rmse",
+            "--target",
+            str(target_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "No best_params.json found" in result.stderr
+    assert "python -m src.select_tuning" in result.stderr
+    assert "Traceback" not in result.stderr

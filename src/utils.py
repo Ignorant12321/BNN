@@ -87,7 +87,7 @@ def create_run_dir(base_dir: str | Path, model_name: str, note: str | None = Non
     return run_dir
 
 
-def setup_logger(log_path: str | Path) -> logging.Logger:
+def setup_logger(log_path: str | Path, stream_formatter: logging.Formatter | None = None) -> logging.Logger:
     """创建同时输出到控制台和日志文件的 logger。"""
     logger = logging.getLogger("pv_forecasting")
     logger.setLevel(logging.INFO)
@@ -96,7 +96,7 @@ def setup_logger(log_path: str | Path) -> logging.Logger:
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
     stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
+    stream_handler.setFormatter(stream_formatter or formatter)
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
     return logger

@@ -136,7 +136,15 @@ def main() -> None:
     objective = None
     if args.source == "latest":
         objective = args.objective or resolve_default_objective(args.config)
-        source = find_latest_best_params(args.tuning_dir, objective_metric=objective)
+        try:
+            source = find_latest_best_params(args.tuning_dir, objective_metric=objective)
+        except FileNotFoundError as exc:
+            parser.exit(
+                1,
+                f"error: {exc}\n"
+                f"Use `python -m src.select_tuning --source latest --metric {objective} --apply` "
+                "to select that metric from an existing tuning run first.\n",
+            )
     else:
         source = Path(args.source)
     changes = apply_best_params(source, args.target, dry_run=args.dry_run)
