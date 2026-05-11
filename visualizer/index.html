@@ -82,10 +82,43 @@
         </section>
 
         <section class="panel">
-          <div class="panel-head">
-            <div>
+          <div class="panel-head metric-panel-head">
+            <div class="metric-panel-copy">
               <h2>指标对比</h2>
               <p>测试集与验证集核心指标，深色标记当前最佳。</p>
+            </div>
+            <div class="metric-sort-bar">
+              <label class="metric-sort-field">
+                <span>排序</span>
+                <select id="metricSortMode">
+                  <option value="added">添加顺序</option>
+                  <option value="timestamp">时间戳</option>
+                  <option value="testMetrics">测试集指标</option>
+                  <option value="validationMetrics">验证集指标</option>
+                </select>
+              </label>
+              <label class="metric-sort-field metric-sort-field-narrow">
+                <span>指标</span>
+                <select id="metricSortKey">
+                  <option value="rmse">rmse</option>
+                  <option value="mae">mae</option>
+                  <option value="nrmse">nrmse</option>
+                  <option value="smape">smape</option>
+                  <option value="crps">crps</option>
+                  <option value="nll">nll</option>
+                  <option value="picp_90">picp_90</option>
+                  <option value="pinaw_90">pinaw_90</option>
+                  <option value="picp_95">picp_95</option>
+                  <option value="pinaw_95">pinaw_95</option>
+                </select>
+              </label>
+              <label class="metric-sort-field">
+                <span>方向</span>
+                <select id="metricSortDirection">
+                  <option value="asc">升序 / 最佳优先</option>
+                  <option value="desc">降序 / 最差优先</option>
+                </select>
+              </label>
             </div>
           </div>
           <div id="metricsTable" class="table-wrap"></div>

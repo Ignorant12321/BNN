@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   flattenObject,
@@ -19,10 +21,15 @@ const {
   getRunNoteFromSources,
   isRunHidden,
   normalizeRunPaths,
+  sortRunsForMetrics,
   updateHiddenRunPaths,
   summarizeFigureCoverage,
   summarizeRuns,
 } = require("./app.js");
+
+const indexHtml = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+assert.match(indexHtml, /<div class="metric-panel-copy">[\s\S]*?<h2>指标对比<\/h2>[\s\S]*?<\/div>\s*<div class="metric-sort-bar">/);
+assert.equal((indexHtml.match(/class="[^"]*\bmetric-sort-field\b[^"]*"/g) || []).length, 3);
 
 const config = parseSimpleYaml(`
 seed: 42
@@ -217,6 +224,30 @@ assert.equal(lightboxItems.findIndex((item) => item.runId === "run-b-id"), 1);
 
 assert.equal(getMetricScore("rmse", 100), 100);
 assert.equal(getMetricScore("picp_90", 0.91), 0.01);
+
+const unsortedRuns = [
+  { name: "20260510-220248", relativePath: "outputs/improved_bnn/20260510-220248", testMetrics: { rmse: 90, picp_90: 0.82 } },
+  { name: "20260511-100732", relativePath: "outputs/improved_bnn/20260511-100732", testMetrics: { rmse: 110, picp_90: 0.88 } },
+  { name: "20260510-193755", relativePath: "outputs/improved_bnn/20260510-193755", testMetrics: { rmse: 100, picp_90: 0.91 } },
+  { name: "manual-run", relativePath: "outputs/improved_bnn/manual-run", testMetrics: { rmse: 80, picp_90: 0.99 } },
+];
+
+assert.deepEqual(
+  sortRunsForMetrics(unsortedRuns, { mode: "timestamp", direction: "asc" }).map((run) => run.name),
+  ["20260510-193755", "20260510-220248", "20260511-100732", "manual-run"],
+);
+assert.deepEqual(
+  sortRunsForMetrics(unsortedRuns, { mode: "timestamp", direction: "desc" }).map((run) => run.name),
+  ["20260511-100732", "20260510-220248", "20260510-193755", "manual-run"],
+);
+assert.deepEqual(
+  sortRunsForMetrics(unsortedRuns, { mode: "testMetrics", metricKey: "rmse", direction: "asc" }).map((run) => run.name),
+  ["manual-run", "20260510-220248", "20260510-193755", "20260511-100732"],
+);
+assert.deepEqual(
+  sortRunsForMetrics(unsortedRuns, { mode: "testMetrics", metricKey: "picp_90", direction: "asc" }).map((run) => run.name),
+  ["20260510-193755", "20260511-100732", "20260510-220248", "manual-run"],
+);
 
 const summary = summarizeRuns([
   {

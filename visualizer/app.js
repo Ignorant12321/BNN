@@ -25,6 +25,11 @@
       test: "rmse",
       validation: "rmse",
     },
+    metricsSort: {
+      mode: "added",
+      metricKey: "rmse",
+      direction: "asc",
+    },
     lightbox: {
       open: false,
       groupName: "",
@@ -480,6 +485,54 @@
     return number;
   }
 
+  function getRunTimestamp(run) {
+    const parts = normalizePath(`${run?.relativePath || ""}/${run?.name || ""}`).split("/");
+    let timestamp = null;
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      if (TIMESTAMP_RE.test(parts[index])) {
+        timestamp = parts[index];
+        break;
+      }
+    }
+    if (!timestamp) return Number.POSITIVE_INFINITY;
+
+    const match = timestamp.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+    if (!match) return Number.POSITIVE_INFINITY;
+    const [, year, month, day, hour, minute, second] = match.map(Number);
+    return Date.UTC(year, month - 1, day, hour, minute, second);
+  }
+
+  function compareSortNumbers(left, right, direction = "asc") {
+    const leftFinite = Number.isFinite(left);
+    const rightFinite = Number.isFinite(right);
+    if (!leftFinite && !rightFinite) return 0;
+    if (!leftFinite) return 1;
+    if (!rightFinite) return -1;
+    return direction === "desc" ? right - left : left - right;
+  }
+
+  function sortRunsForMetrics(runs, sortConfig = {}) {
+    const mode = sortConfig.mode || "added";
+    if (mode === "added") return [...runs];
+
+    const direction = sortConfig.direction === "desc" ? "desc" : "asc";
+    const metricKey = sortConfig.metricKey || "rmse";
+
+    return runs
+      .map((run, index) => ({ run, index }))
+      .sort((left, right) => {
+        const leftValue = mode === "timestamp" ? getRunTimestamp(left.run) : getMetricScore(metricKey, left.run[mode]?.[metricKey]);
+        const rightValue = mode === "timestamp" ? getRunTimestamp(right.run) : getMetricScore(metricKey, right.run[mode]?.[metricKey]);
+        const primary = compareSortNumbers(leftValue, rightValue, direction);
+        if (primary !== 0) return primary;
+
+        const timestampTieBreak = compareSortNumbers(getRunTimestamp(left.run), getRunTimestamp(right.run), "asc");
+        if (timestampTieBreak !== 0) return timestampTieBreak;
+        return left.index - right.index;
+      })
+      .map((item) => item.run);
+  }
+
   function summarizeRuns(runs) {
     const includedRuns = runs.filter((run) => run.visible !== false);
     const bestMetrics = {};
@@ -779,7 +832,7 @@
 
   function renderMetricsTable() {
     const container = document.getElementById("metricsTable");
-    const runs = visibleRuns();
+    const runs = sortRunsForMetrics(visibleRuns(), state.metricsSort);
     if (runs.length === 0) {
       container.innerHTML = '<p class="empty">选择 run 后显示指标。</p>';
       return;
@@ -1112,6 +1165,16 @@
     document.getElementById("runVisibilityFilter").addEventListener("change", renderRunList);
     document.getElementById("metricSelect").addEventListener("change", renderVisualCharts);
     document.getElementById("horizonMetricSelect").addEventListener("change", renderVisualCharts);
+    for (const id of ["metricSortMode", "metricSortKey", "metricSortDirection"]) {
+      document.getElementById(id).addEventListener("change", () => {
+        state.metricsSort = {
+          mode: document.getElementById("metricSortMode").value,
+          metricKey: document.getElementById("metricSortKey").value,
+          direction: document.getElementById("metricSortDirection").value,
+        };
+        renderMetricsTable();
+      });
+    }
     document.getElementById("figureSearch").addEventListener("input", renderFigures);
 
     document.getElementById("runList").addEventListener("change", (event) => {
@@ -1204,6 +1267,7 @@
     normalizeRunPaths,
     parseCsv,
     parseSimpleYaml,
+    sortRunsForMetrics,
     summarizeFigureCoverage,
     summarizeRuns,
     updateHiddenRunPaths,

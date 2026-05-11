@@ -16,7 +16,7 @@ model:
   prior_sigma: 1.0
 training:
   device: auto
-  epochs: 400
+  epochs: 500
   batch_size: 128
   num_workers: 0
   pin_memory: true

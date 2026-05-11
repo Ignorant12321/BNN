@@ -46,6 +46,7 @@ ANSI_GREEN = "\033[32m"
 ANSI_PURPLE = "\033[35m"
 ANSI_BLUE = "\033[34m"
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
+CORE_METRIC_KEYS = ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
 
 
 def main() -> None:
@@ -258,8 +259,8 @@ def _build_training_summary_lines(
     for result in evaluation_results:
         label = "validation" if result.split == "val" else result.split
         metrics_path = _relative_to_run_dir(result.outputs.metrics, run_dir)
-        metric_text = _format_core_metrics(result.metrics)
-        lines.append(f"{label}_metrics={metrics_path} {metric_text}".rstrip())
+        metric_text = _format_metrics_table(result.metrics)
+        lines.append(f"{label}_metrics: {metrics_path}\n{metric_text}".rstrip())
     return lines
 
 
@@ -279,18 +280,22 @@ def _relative_to_run_dir(path: Path, run_dir: Path) -> str:
         return str(path)
 
 
-def _format_core_metrics(metrics: dict[str, float]) -> str:
-    """按固定顺序输出常用评估指标，缺失时自动跳过。"""
-    preferred = ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"]
+def _format_metrics_table(metrics: dict[str, float]) -> str:
+    """按固定顺序把常用评估指标排成窄表，避免控制台横向换行。"""
     parts = []
-    for key in preferred:
+    for key in CORE_METRIC_KEYS:
         if key in metrics:
-            parts.append(f"{key}={float(metrics[key]):.6f}")
-    for key in sorted(set(metrics) - set(preferred)):
+            parts.append((key, float(metrics[key])))
+    for key in sorted(set(metrics) - set(CORE_METRIC_KEYS)):
         value = metrics[key]
         if isinstance(value, int | float | np.number):
-            parts.append(f"{key}={float(value):.6f}")
-    return " ".join(parts)
+            parts.append((key, float(value)))
+    if not parts:
+        return "  metric    value"
+    key_width = max(8, *(len(key) for key, _ in parts))
+    lines = [f"  {'metric':<{key_width}}  value"]
+    lines.extend(f"  {key:<{key_width}}  {value:.6f}" for key, value in parts)
+    return "\n".join(lines)
 
 
 def _color_training_log_message(message: str) -> str:
@@ -307,12 +312,8 @@ def _color_training_log_message(message: str) -> str:
         return _highlight_key_values(colored, ["best_val_loss"], ANSI_PURPLE)
     if message.startswith("final_train_loss=") or message.startswith("final_val_loss="):
         return _color(message, ANSI_PURPLE)
-    if message.startswith("validation_metrics=") or message.startswith("test_metrics="):
-        return _highlight_key_values(
-            message,
-            ["rmse", "mae", "smape", "nrmse", "crps", "picp_90", "pinaw_90", "picp_95", "pinaw_95", "nll"],
-            ANSI_PURPLE,
-        )
+    if message.startswith("validation_metrics:") or message.startswith("test_metrics:"):
+        return _highlight_metric_rows(message, CORE_METRIC_KEYS, ANSI_PURPLE)
     return message
 
 
@@ -320,6 +321,12 @@ def _highlight_key_values(message: str, keys: list[str], color_code: str) -> str
     """高亮 key=value 片段，保持其余日志默认色。"""
     key_pattern = "|".join(re.escape(key) for key in keys)
     return re.sub(rf"(?<![\w])((?:{key_pattern})=[^,\s]+)", lambda match: _color(match.group(1), color_code), message)
+
+
+def _highlight_metric_rows(message: str, keys: list[str], color_code: str) -> str:
+    """高亮 metrics 表格里的数值列，保持路径和表头清爽可读。"""
+    key_pattern = "|".join(re.escape(key) for key in keys)
+    return re.sub(rf"(?m)^(\s+(?:{key_pattern})\s+)([-+]?\d+(?:\.\d+)?)$", lambda match: match.group(1) + _color(match.group(2), color_code), message)
 
 
 def _color(text: str, code: str) -> str:

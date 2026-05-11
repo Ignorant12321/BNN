@@ -258,6 +258,54 @@ body.sidebar-collapsed .sidebar {
   font-weight: 700;
 }
 
+.metric-panel-head {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(560px, 0.98fr);
+}
+
+.metric-panel-copy {
+  min-width: 0;
+}
+
+.metric-sort-bar {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.8fr) minmax(180px, 1fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, white);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-strong) 38%, white);
+}
+
+.metric-sort-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.metric-sort-field span {
+  color: var(--accent-dark);
+}
+
+.metric-sort-field select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 6px 32px 6px 10px;
+  border-color: color-mix(in srgb, var(--line) 84%, var(--accent));
+  font-weight: 800;
+}
+
 .run-list {
   display: grid;
   gap: 10px;
@@ -859,6 +907,14 @@ th.cell-selected {
   .panel-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .metric-panel-head {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-sort-bar {
+    grid-template-columns: 1fr;
   }
 
   .lightbox-panel {

@@ -1,8 +1,32 @@
 # 基于贝叶斯神经网络的分布式光伏出力概率预测
 
-本项目用于研究分布式光伏电站未来 4 小时 `AC_POWER` 的概率预测。代码以 Plant 1 发电数据和气象传感器数据为实验对象，在 15 分钟时间粒度下构造监督学习样本，并用改进贝叶斯神经网络输出未来 16 步预测均值、方差和预测区间。
+本项目研究分布式光伏电站未来 4 小时 `AC_POWER` 的概率预测。代码以 Plant 1 发电数据和气象传感器数据为实验对象，在 15 分钟时间粒度下构造监督学习样本，并使用改进贝叶斯神经网络输出未来 16 步的预测均值、方差和预测区间。
 
-README 以当前代码实现为准，重点说明如何准备数据、调参、训练、评估和查看结果。
+当前实现覆盖数据准备、模型训练、Optuna 调参、验证/测试集评估、结果可视化和自动化测试。README 以当前代码为准，说明如何复现实验、查看输出和理解工程目录。
+
+## 项目概览
+
+| 项目 | 设置 |
+| --- | --- |
+| 时间粒度 | 15 分钟 |
+| 历史窗口 | 过去 16 步，即预测点前 4 小时 |
+| 预测窗口 | 未来 16 步，即未来 4 小时 |
+| 预测目标 | 电站级 `AC_POWER` |
+| 主模型 | `ImprovedBayesianPVNet` |
+| 输出 | 未来 16 步预测均值、方差、90%/95% 预测区间 |
+| 调参工具 | Optuna |
+| 可视化入口 | `visualizer/server.py` |
+
+窗口定义：
+
+```text
+history: [t - 16, ..., t - 1]
+direct : t - 1
+weather: [t, ..., t + 15]
+target : [t, ..., t + 15]
+```
+
+`direct` 只使用预测点前一刻的数据，不能使用预测点 `t` 或之后的数据。
 
 ## 快速开始
 
@@ -12,28 +36,16 @@ README 以当前代码实现为准，重点说明如何准备数据、调参、�
 pip install -r requirements.txt
 ```
 
-准备数据并训练：
+准备数据：
 
 ```bash
-python -m src.prepare_data --config configs/default.yaml```
+python -m src.prepare_data --config configs/default.yaml
 ```
 
-训练模型：
+训练并评估模型：
 
 ```bash
 python -m src.train --config configs/default.yaml
-```
-
-自动调参：
-
-```bash
-python -m src.tune
-```
-
-把最新调参结果迁移到正式训练配置：
-
-```bash
-python -m src.apply_tuning
 ```
 
 查看实验结果：
@@ -42,7 +54,7 @@ python -m src.apply_tuning
 python visualizer/server.py
 ```
 
-默认打开 `http://127.0.0.1:5177/`。如需换端口：
+默认访问地址为 `http://127.0.0.1:5177/`。如需换端口：
 
 ```bash
 python visualizer/server.py --port 5178
@@ -57,13 +69,68 @@ pytest -q
 ## 推荐工作流
 
 1. 用 `configs/default.yaml` 运行 `prepare_data`，固化清洗结果和时间切分。
-2. 用 `configs/tuning.yaml` 运行 Optuna 调参。调参只看验证集，不用测试集选模型。
-3. 如需换验证集指标，从已有 trial 中用 `src.select_tuning` 重新选择 best trial。
+2. 用 `configs/tuning.yaml` 运行 Optuna 调参。调参只使用验证集，不用测试集选模型。
+3. 如需更换验证集选择指标，用 `src.select_tuning` 从已有 trial 中重新选择 best trial。
 4. 用 `src.apply_tuning` 将 `best_params.json` 中的参数迁移到 `configs/default.yaml`。
 5. 用 `configs/default.yaml` 正式训练，并评估验证集和测试集。
 6. 写报告或论文时，最终性能优先引用正式训练输出中的测试集指标。
 
-## 数据与任务
+常用命令：
+
+```bash
+python -m src.prepare_data --config configs/default.yaml
+python -m src.tune
+python -m src.select_tuning --source latest --show
+python -m src.select_tuning --source latest --metric crps
+python -m src.apply_tuning --objective crps
+python -m src.train --config configs/default.yaml --note "final config"
+```
+
+## 工程目录
+
+```text
+BNN/
+├── configs/                 # 实验配置
+│   ├── default.yaml          # 正式训练和测试集评估
+│   ├── tuning.yaml           # Optuna 调参配置
+│   └── compare.yaml          # 模型对比实验配置
+├── dataset/                 # 原始 Plant 1 数据
+│   ├── Plant_1_Generation_Data.csv
+│   └── Plant_1_Weather_Sensor_Data.csv
+├── data/
+│   └── processed/            # prepare_data 输出的 train/val/test 切分
+├── src/                      # 核心 Python 代码
+│   ├── data.py               # CSV 读取、逆变器聚合、气象合并
+│   ├── prepare_data.py       # 数据清洗和时间切分入口
+│   ├── features.py           # 特征工程与特征分组
+│   ├── dataset.py            # 时间切分、滑动窗口和 Dataset
+│   ├── train.py              # 主训练入口
+│   ├── evaluate_model.py     # 重新评估已有 run
+│   ├── evaluation_pipeline.py # 评估、预测导出和图像生成
+│   ├── predict.py            # MC 推理与预测区间计算
+│   ├── losses.py             # Gaussian NLL 与 ELBO 风格损失
+│   ├── metrics.py            # 点预测与概率预测指标
+│   ├── tune.py               # Optuna 调参入口
+│   ├── select_tuning.py      # 从已有 trial 中重选 best trial
+│   ├── apply_tuning.py       # 将调参结果迁移到 default.yaml
+│   └── models/
+│       ├── bayesian_layers.py
+│       ├── branches.py
+│       ├── improved_bnn.py
+│       └── baselines.py
+├── visualizer/               # 本地实验结果查看页面
+│   ├── server.py
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
+├── tests/                    # Pytest 测试
+├── notebooks/                # 数据检查、特征分析和预测可视化 notebook
+├── outputs/                  # 训练、调参和评估产物
+├── requirements.txt
+└── README.md
+```
+
+## 数据与特征
 
 原始数据放在 `dataset/`：
 
@@ -73,27 +140,28 @@ dataset/
 └── Plant_1_Weather_Sensor_Data.csv
 ```
 
-任务设置：
+数据处理流程：
 
-| 项目 | 设置 |
-| --- | --- |
-| 时间粒度 | 15 分钟 |
-| 历史窗口 | 过去 16 步，即预测点前 4 小时 |
-| 预测窗口 | 未来 16 步，即未来 4 小时 |
-| 预测目标 | 电站级 `AC_POWER` |
-| 主要模型 | `ImprovedBayesianPVNet` |
-| 输出 | 未来 16 步预测均值、方差和预测区间 |
+1. 解析 `DATE_TIME`。
+2. 将多个逆变器记录按时间聚合为电站级时间序列。
+3. 按时间戳合并气象传感器数据。
+4. 补齐 15 分钟规则时间轴并处理缺失值。
+5. 添加 `hour`、周期时间特征、白天标记和 `last_ac_power`。
+6. 按时间顺序切分 train / val / test。
+7. 在每个子集内部构造滑动窗口，避免窗口跨越切分边界。
+8. 只在训练集窗口上拟合 scaler，再用于验证集和测试集。
 
-窗口定义：
+运行数据准备后会写出：
 
 ```text
-history: [t - 16, ..., t - 1]
-direct : t - 1
-weather: [t, ..., t + 15]
-target : [t, ..., t + 15]
+data/processed/
+├── train.csv
+├── val.csv
+├── test.csv
+└── split_info.json
 ```
 
-`direct` 必须是预测点前一刻的数据，不能使用预测点 `t` 或预测点之后的数据。
+训练时会优先读取 `data/processed/` 中的固定切分。如果文件不存在，则自动从原始 CSV 即席清洗和切分。滑动窗口仍在训练时根据 `lookback` 和 `horizon` 动态构造。
 
 特征分组由 `src/features.py` 统一维护：
 
@@ -106,37 +174,6 @@ target : [t, ..., t + 15]
 
 论文语境下，`weather` 表示可由数值天气预报获得的未来天气特征。当前公开数据集没有真实 NWP 文件，因此实验中使用预测窗口内的真实气象观测值作为天气预报替代输入。论文写作时需要明确说明这是数据集限制下的模拟设定。
 
-## 数据处理
-
-主流程会完成：
-
-1. 解析 `DATE_TIME`。
-2. 将多个逆变器记录聚合为电站级时间序列。
-3. 按时间合并气象数据。
-4. 补齐 15 分钟规则时间轴并处理缺失值。
-5. 添加 `hour`、周期时间特征、白天标记和 `last_ac_power`。
-6. 按时间顺序切分 train / val / test。
-7. 在每个子集内部构造滑动窗口，避免窗口跨越切分边界。
-8. 只在训练集窗口上拟合 scaler，再用于验证集和测试集。
-
-可先把清洗和时间切分单独固化为中间文件：
-
-```bash
-python -m src.prepare_data --config configs/default.yaml
-```
-
-输出：
-
-```text
-data/processed/
-├── train.csv
-├── val.csv
-├── test.csv
-└── split_info.json
-```
-
-之后训练会优先读取这些已处理文件。如果文件不存在，则自动回退到从原始 CSV 即席清洗和切分。滑动窗口仍在训练时根据 `lookback` 和 `horizon` 动态构造。
-
 ## 配置说明
 
 主要配置文件：
@@ -145,9 +182,7 @@ data/processed/
 | --- | --- |
 | `configs/default.yaml` | 正式训练和测试集评估 |
 | `configs/tuning.yaml` | Optuna 调参，不会自动继承 `default.yaml` |
-| `configs/compare.yaml` | 模型对比实验 |
-
-`default.yaml` 和 `tuning.yaml` 的大多数字段含义相同。区别是：`tuning.yaml` 每个 trial 会复制这份配置，然后用 `tuning.search_space` 中采样到的值覆盖部分模型和训练字段。
+| `configs/compare.yaml` | 模型对比实验配置 |
 
 常用字段：
 
@@ -169,17 +204,6 @@ data/processed/
 | `training.patience` | 验证损失连续多少轮未改善后 early stopping |
 | `prediction.mc_samples` | 推理时 Monte Carlo 前向传播次数 |
 | `evaluation.run_test` | 是否在训练结束后评估测试集，正式训练建议为 `true` |
-
-`configs/tuning.yaml` 中额外包含：
-
-| 字段 | 含义 |
-| --- | --- |
-| `tuning.study_name` | Optuna study 名称，同名 study 会复用历史 trial |
-| `tuning.storage` | Optuna 持久化存储位置 |
-| `tuning.load_if_exists` | storage 中已有同名 study 时是否继续加载 |
-| `tuning.n_trials` | 目标总 trial 数，不是每次启动追加的数量 |
-| `tuning.objective_metric` | 选择最佳 trial 的验证集指标，例如 `crps`、`rmse`、`nll`，数值越小越好 |
-| `tuning.search_space.*` | `hidden_dim`、`branch_dim`、`lr`、`kl_beta` 的搜索范围 |
 
 配置使用注意：
 
@@ -226,13 +250,9 @@ outputs/tuning/YYYYMMDD-HHMMSS/
 └── improved_bnn/<trial时间戳>/
 ```
 
-`best_params.json`、`best_config.yaml` 和 `trials.csv` 位于调参会话根目录；每个 trial 的训练产物位于 `improved_bnn/<trial时间戳>/`。
+`configs/tuning.yaml` 默认使用 SQLite 持久化 study：`outputs/tuning/optuna.db`。如果调参进程中断，再次运行 `python -m src.tune` 会通过同名 study 继续搜索已完成 trial 之后的配置。此时 `tuning.n_trials` 表示目标总 trial 数，不是每次启动追加的数量。
 
-`configs/tuning.yaml` 默认使用 SQLite 持久化 study：`outputs/tuning/optuna.db`。如果调参进程中断，再次运行 `python -m src.tune` 会通过同名 study 继续搜索已完成 trial 之后的配置。此时 `tuning.n_trials` 表示目标总 trial 数。
-
-### 应用最新 best params
-
-把最新调参会话的 `best_params.json` 迁移到正式训练配置：
+应用最新调参结果：
 
 ```bash
 python -m src.apply_tuning
@@ -256,13 +276,7 @@ python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.j
 python -m src.apply_tuning --no-color
 ```
 
-`apply_tuning` 会先展示 source、target、objective 和参数变化，只有确认输入 `y` 或 `yes` 后才会写入 `configs/default.yaml`。如需在脚本中跳过确认，可加 `--yes`。
-
-当 `--source latest` 时，`apply_tuning` 只检查最新的 tuning 会话。如果最新会话的 `objective_metric` 和 `--objective` 不一致，命令会拒绝执行，并提示先用 `src.select_tuning` 在最新会话里重新选择指标。它不会偷偷回退到旧的 tuning 会话。
-
-### 从已有 trial 切换指标
-
-如果已经完成一轮调参，但不想重新训练，又想改用另一个验证集指标选择 best trial：
+如果已经完成一轮调参，但想改用另一个验证集指标选择 best trial：
 
 ```bash
 python -m src.select_tuning --source latest --show
@@ -277,7 +291,7 @@ python -m src.apply_tuning --objective rmse
 | `src.select_tuning` | 查询已有 trial，并按验证集指标重选 best trial | 当前 tuning 会话的 `best_params.json` 和 `best_config.yaml` |
 | `src.apply_tuning` | 把 `best_params.json` 中的参数迁移到正式训练配置 | `configs/default.yaml` |
 
-`select_tuning` 和 `apply_tuning` 都会先展示将要发生的变化，只有确认输入 `y` 或 `yes` 后才会写文件；如需自动化执行，可加 `--yes`。两个命令默认使用克制的彩色输出；如果终端或日志不需要颜色，可加 `--no-color`。
+`select_tuning` 和 `apply_tuning` 都会先展示将要发生的变化，只有确认输入 `y` 或 `yes` 后才会写文件；如需自动化执行，可加 `--yes`。如果终端或日志不需要颜色，可加 `--no-color`。
 
 ## 可视化
 
@@ -296,7 +310,7 @@ python visualizer/server.py
 | 隐藏/显示 run | `visualizer/hidden-runs.json` |
 | 编辑 run 备注 | 对应 run 目录下的 `note.txt` |
 
-如果只临时查看静态页面，也可以用 Live Server 打开 `visualizer/index.html`；但需要保存隐藏状态和备注时，请使用 `python visualizer/server.py`。
+如果只临时查看静态页面，也可以用 Live Server 打开 `visualizer/index.html`。需要保存隐藏状态和备注时，请使用 `python visualizer/server.py`。
 
 ## 输出与指标
 
@@ -347,46 +361,50 @@ outputs/improved_bnn/YYYYMMDD-HHMMSS/
 
 ## 模型结构
 
-主模型位于 `src/models/improved_bnn.py`。模型按数据来源分三路处理，再在融合层中统一建模。
+主模型位于 `src/models/improved_bnn.py`，类名为 `ImprovedBayesianPVNet`。
 
 ```text
-weather [batch, 16, 4]
-  -> ForecastWeatherMLPBranch
-  -> Linear(4 * 16 -> 32)
-  -> Linear(32 -> 64)
-  -> Linear(64 -> branch_dim)
+history: 过去功率序列 [B, 16, 1]
+        -> HistoryCNNBranch
+        -> history_code [B, branch_dim]
 
-history [batch, 16, 1]
-  -> HistoryCNNBranch
-  -> Conv1d(kernel_size=5)
-  -> AvgPool1d(kernel_size=5)
-  -> Conv1d(kernel_size=5)
-  -> AdaptiveAvgPool1d(1)
-  -> Linear(branch_dim -> branch_dim)
+weather: 未来天气序列 [B, 16, 4]
+        -> ForecastWeatherMLPBranch
+        -> weather_code [B, branch_dim]
 
-direct [batch, 1]
-  -> 直接拼接进融合层
+direct: 预测点前一刻功率 [B, 1]
+        -> direct_code [B, 1]
 
-fusion
-  -> BayesianLinear
-  -> BayesianLinear
-  -> mean_head: BayesianLinear(hidden_dim -> 16)
-  -> log_var_head: BayesianLinear(hidden_dim -> 16)
+concat(history_code, weather_code, direct_code)
+        -> BayesianLinear
+        -> BayesianLinear
+        -> mean_head / log_var_head
+        -> mean [B, 16], log_var [B, 16]
 ```
 
 输入和输出：
 
 | 名称 | Shape | 作用 |
 | --- | --- | --- |
-| `weather` | `[batch, 16, 4]` | 未来 16 个步长的天气和小时特征 |
 | `history` | `[batch, 16, 1]` | 预测点前 4 小时历史 `AC_POWER` |
-| `direct` | `[batch, 1]` | 预测点前一刻 `last_ac_power` |
-| `mean_head` | `[batch, 16]` | 未来 16 步预测均值 |
-| `log_var_head` | `[batch, 16]` | 未来 16 步对数方差 |
+| `weather` | `[batch, 16, 4]` | 未来 16 个步长的天气和小时特征 |
+| `direct` | `[batch, 1]` | 预测点前一刻 `last_ac_power`，不使用预测点之后的信息 |
+| `mean` | `[batch, 16]` | 未来 16 步预测均值 |
+| `log_var` | `[batch, 16]` | 未来 16 步对数方差，代码中会 clamp 到 `[-10, 6]` 避免数值不稳定 |
 
-`BayesianLinear` 将每个权重和偏置建模为高斯分布。模型学习后验分布参数 `mu` 和 `rho`，其中 `sigma = softplus(rho)`。训练时通过重参数化采样权重：
+三路输入各自承担的角色：
+
+| 分支 | 看什么 | 做什么 |
+| --- | --- | --- |
+| history CNN | 过去 4 小时 `AC_POWER` 曲线 | 用一维卷积提取局部波动、爬坡和下降趋势 |
+| weather MLP | 未来 4 小时 `IRRADIATION`、温度和 `hour` | 学习天气预报窗口和未来功率序列之间的非线性关系 |
+| direct input | `t-1` 时刻 `AC_POWER` | 提供最近功率水平作为强参考，不经过额外编码 |
+| Bayesian fusion | 上面三路拼接后的向量 | 用贝叶斯线性层建模参数不确定性，同时输出均值和方差 |
+
+`BayesianLinear` 把每个权重和偏置都建模为高斯分布，学习后验参数 `mu` 和 `rho`：
 
 ```text
+sigma = softplus(rho)
 weight = mu + sigma * eps
 ```
 
@@ -396,33 +414,17 @@ weight = mu + sigma * eps
 loss = Gaussian NLL(mean, log_var, target) + beta * KL / num_batches
 ```
 
-推理时执行多次 Monte Carlo 前向传播。不同权重采样得到的预测差异表示模型不确定性，`log_var_head` 输出的方差表示数据噪声不确定性，二者合并后得到最终 `y_std` 和预测区间。
+推理时会执行多次 Monte Carlo 前向传播。多次权重采样造成的预测差异表示模型不确定性；`log_var_head` 输出的方差表示数据噪声不确定性；两者合并后得到最终标准差和预测区间。
 
-## 代码结构
+## 测试
 
-```text
-src/
-├── data.py                # CSV 读取、聚合与合并
-├── prepare_data.py        # 清洗原始数据并写出 train/val/test 切分
-├── features.py            # 特征工程与特征分组
-├── dataset.py             # 时间切分、窗口构造和 Dataset
-├── losses.py              # Gaussian NLL 与 ELBO 风格损失
-├── metrics.py             # 点预测与概率预测指标
-├── evaluate.py            # 指标汇总
-├── evaluation_pipeline.py # 训练后评估、预测导出和图像生成
-├── predict.py             # MC 推理与区间计算
-├── visualization.py       # 实验图像绘制
-├── train.py               # 主训练入口
-├── evaluate_model.py      # 独立评估已有训练结果
-├── tune.py                # Optuna 调参入口
-├── select_tuning.py       # 从已有 trial 中按指标重选 best trial
-├── apply_tuning.py        # 将 best_params.json 迁移到 default.yaml
-└── models/
-    ├── bayesian_layers.py
-    ├── branches.py
-    ├── improved_bnn.py
-    └── baselines.py
+运行全部测试：
+
+```bash
+pytest -q
 ```
+
+测试覆盖数据处理、时间切分、泄漏检查、指标计算、模型前向传播、训练运行时配置、调参工具和可视化服务等模块。
 
 ## 论文写作说明
 
@@ -434,3 +436,9 @@ src/
 4. 三路输入融合后进入贝叶斯全连接层，同时输出预测均值和方差。
 5. 通过 Monte Carlo 前向传播估计模型不确定性，并结合输出方差形成预测区间。
 6. 当前天气输入由真实观测模拟 NWP，后续接入真实数值天气预报后可进一步验证部署性能。
+
+## 当前限制
+
+1. `weather` 使用预测窗口内真实气象观测替代 NWP，实验结论应表述为数据集限制下的模拟预测设定。
+2. `configs/compare.yaml` 已列出 baseline 对比项，但统一 baseline 训练流程仍需继续完善。
+3. 当前实验主要基于 Plant 1 单电站数据，跨季节和跨电站泛化能力还需要更多数据验证。

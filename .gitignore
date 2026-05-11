@@ -21,3 +21,5 @@ data/processed/
 *.npy
 
 .idea/
+
+/visualizer/hidden-runs.json

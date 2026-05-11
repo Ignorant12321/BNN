@@ -106,8 +106,12 @@ def test_build_training_summary_lines_includes_duration_status_and_metrics(tmp_p
     assert "best_val_loss=0.123457" in text
     assert "early_stopping_epoch=12" in text
     assert "final_train_loss=0.400000" in text
-    assert "validation_metrics=metrics/validation_metrics.json rmse=10.123456 mae=5.500000 picp_90=0.910000" in text
-    assert "test_metrics=metrics/metrics.json rmse=11.200000 mae=6.000000 picp_90=0.880000" in text
+    assert "validation_metrics: metrics/validation_metrics.json\n  metric    value\n  rmse      10.123456" in text
+    assert "  mae       5.500000" in text
+    assert "  picp_90   0.910000" in text
+    assert "test_metrics: metrics/metrics.json\n  metric    value\n  rmse      11.200000" in text
+    assert "  mae       6.000000" in text
+    assert "  picp_90   0.880000" in text
 
 
 def test_color_training_log_message_highlights_epochs_losses_and_options() -> None:
