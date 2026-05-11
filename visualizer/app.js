@@ -281,6 +281,12 @@
     return runs.filter((run) => `${run.name} ${run.relativePath} ${run.note || ""}`.toLowerCase().includes(normalized));
   }
 
+  function filterRunsByVisibility(runs, visibilityFilter = "all") {
+    if (visibilityFilter === "visible") return runs.filter((run) => run.visible);
+    if (visibilityFilter === "hidden") return runs.filter((run) => !run.visible);
+    return runs;
+  }
+
   function getTableSelectionClasses(selection, tableId, row, col) {
     if (!selection || selection.tableId !== tableId) return "";
     const classes = [];
@@ -604,7 +610,8 @@
     count.textContent = state.runs.length;
 
     const query = document.getElementById("runSearch")?.value || "";
-    const runs = filterRunsBySearch(state.runs, query);
+    const visibilityFilter = document.getElementById("runVisibilityFilter")?.value || "all";
+    const runs = filterRunsByVisibility(filterRunsBySearch(state.runs, query), visibilityFilter);
 
     if (state.runs.length === 0) {
       list.innerHTML = '<p class="empty">还没有添加实验文件夹。</p>';
@@ -1102,6 +1109,7 @@
     document.getElementById("diffOnlyToggle").addEventListener("change", renderParamsTable);
     document.getElementById("paramSearch").addEventListener("input", renderParamsTable);
     document.getElementById("runSearch").addEventListener("input", renderRunList);
+    document.getElementById("runVisibilityFilter").addEventListener("change", renderRunList);
     document.getElementById("metricSelect").addEventListener("change", renderVisualCharts);
     document.getElementById("horizonMetricSelect").addEventListener("change", renderVisualCharts);
     document.getElementById("figureSearch").addEventListener("input", renderFigures);
@@ -1179,6 +1187,7 @@
   const api = {
     discoverRunsFromPaths,
     filterRunsBySearch,
+    filterRunsByVisibility,
     flattenObject,
     formatValue,
     getBestRunForMetric,

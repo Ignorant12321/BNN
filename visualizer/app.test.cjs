@@ -11,6 +11,7 @@ const {
   getMetricDatasetGroups,
   getMetricKeys,
   filterRunsBySearch,
+  filterRunsByVisibility,
   getBestRunForMetric,
   getRunNoteStorageKey,
   getTableSelectionClasses,
@@ -97,6 +98,30 @@ assert.deepEqual(
   ).map((run) => run.name),
   ["20260509-223920"],
 );
+
+assert.deepEqual(
+  filterRunsByVisibility(
+    [
+      { name: "run-a", visible: true },
+      { name: "run-b", visible: false },
+      { name: "run-c", visible: true },
+    ],
+    "visible",
+  ).map((run) => run.name),
+  ["run-a", "run-c"],
+);
+assert.deepEqual(
+  filterRunsByVisibility(
+    [
+      { name: "run-a", visible: true },
+      { name: "run-b", visible: false },
+      { name: "run-c", visible: true },
+    ],
+    "hidden",
+  ).map((run) => run.name),
+  ["run-b"],
+);
+assert.deepEqual(filterRunsByVisibility([{ name: "run-a", visible: false }], "all").map((run) => run.name), ["run-a"]);
 
 assert.equal(nextSidebarCollapsed(false), true);
 assert.equal(nextSidebarCollapsed(true), false);

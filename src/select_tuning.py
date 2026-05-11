@@ -1,5 +1,19 @@
 """Select existing tuning trials by validation metrics.
 
+用法说明：
+1. `python -m src.select_tuning --source latest --show`
+   查看最新 tuning 会话中常见验证集指标各自对应的 best trial。
+2. `python -m src.select_tuning --source latest --metric rmse`
+   从已有 trial 中按 `rmse` 重新选择 best trial，预览
+   `best_params.json` 和 `best_config.yaml` 的变化，输入 `y` 或 `yes`
+   后才真正写入。
+3. `python -m src.select_tuning --source outputs/tuning/YYYYMMDD-HHMMSS --metric crps`
+   对指定 tuning 会话按 `crps` 重选 best trial。
+4. `python -m src.select_tuning --source latest --metric rmse --yes`
+   跳过确认直接更新 tuning artifacts，适合脚本或自动化流程。
+5. `python -m src.select_tuning --no-color ...`
+   关闭终端彩色输出。
+
 This command reuses completed Optuna trial outputs. It does not launch new
 training; it reads each trial's ``validation_metrics.json`` and can update a
 tuning session's ``best_params.json`` and ``best_config.yaml`` after an explicit
@@ -18,6 +32,11 @@ from typing import Any
 from src.apply_tuning import PARAM_PATHS
 from src.utils import load_config, save_config
 
+
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_PURPLE = "\033[35m"
+ANSI_BLUE = "\033[34m"
 
 DEFAULT_SHOW_METRICS = ("crps", "rmse", "mae", "nll", "smape", "nrmse")
 
@@ -176,39 +195,46 @@ def update_tuning_artifacts(tuning_run: str | Path, selection: TrialSelection) -
     return changes
 
 
-def format_selection(selection: TrialSelection, changes: list[ArtifactChange] | None = None) -> str:
+def format_selection(selection: TrialSelection, changes: list[ArtifactChange] | None = None, color: bool = False) -> str:
     """Format one selected trial and optional artifact changes for console output."""
     lines = [
-        f"Selected trial: {selection.number}",
-        f"metric: {selection.metric}={selection.metric_value:.6f}",
-        f"run_dir: {selection.run_dir}",
-        "Validation metrics:",
+        f"{_color('Selected trial:', ANSI_GREEN, color)} {selection.number}",
+        f"{_color('metric:', ANSI_PURPLE, color)} {selection.metric}={selection.metric_value:.6f}",
+        f"{_color('run_dir:', ANSI_BLUE, color)} {selection.run_dir}",
+        _color("Validation metrics:", ANSI_PURPLE, color),
     ]
     for key in DEFAULT_SHOW_METRICS:
         if key in selection.metrics:
             lines.append(f"  {key}: {selection.metrics[key]:.6f}")
     for key in sorted(set(selection.metrics) - set(DEFAULT_SHOW_METRICS)):
         lines.append(f"  {key}: {selection.metrics[key]:.6f}")
-    lines.append("Params:")
+    lines.append(_color("Params:", ANSI_BLUE, color))
     for key in PARAM_PATHS:
         if key in selection.params:
             lines.append(f"  {key}: {selection.params[key]}")
     if changes is not None:
-        lines.append("Artifact changes:")
-        lines.extend(f"  {change.path}: {change.old} -> {change.new} ({change.status})" for change in changes)
+        lines.append(_color("Artifact changes:", ANSI_BLUE, color))
+        lines.extend(format_artifact_change(change, color=color) for change in changes)
     return "\n".join(lines)
 
 
-def format_show_summary(tuning_run: str | Path, metrics: tuple[str, ...] = DEFAULT_SHOW_METRICS) -> str:
+def format_artifact_change(change: ArtifactChange, color: bool = False) -> str:
+    """Format one planned artifact change."""
+    status_color = ANSI_GREEN if change.status == "changed" else ANSI_PURPLE
+    status = _color(f"({change.status})", status_color, color)
+    return f"  {change.path}: {change.old} -> {change.new} {status}"
+
+
+def format_show_summary(tuning_run: str | Path, metrics: tuple[str, ...] = DEFAULT_SHOW_METRICS, color: bool = False) -> str:
     """Format the best trial for each requested metric."""
-    lines = [f"Source: {Path(tuning_run)}", "Best trials by validation metric:"]
+    lines = [f"{_color('Source:', ANSI_GREEN, color)} {Path(tuning_run)}", _color("Best trials by validation metric:", ANSI_PURPLE, color)]
     for metric in metrics:
         try:
             selected = select_best_trial(tuning_run, metric)
         except KeyError:
             continue
         lines.append(
-            f"  {metric}: trial={selected.number} value={selected.metric_value:.6f} "
+            f"  {_color(metric + ':', ANSI_PURPLE, color)} trial={selected.number} value={selected.metric_value:.6f} "
             f"rmse={selected.metrics.get('rmse', float('nan')):.6f} "
             f"mae={selected.metrics.get('mae', float('nan')):.6f} "
             f"crps={selected.metrics.get('crps', float('nan')):.6f}"
@@ -217,13 +243,13 @@ def format_show_summary(tuning_run: str | Path, metrics: tuple[str, ...] = DEFAU
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Query existing tuning trials and optionally update tuning summary artifacts.")
+    parser = argparse.ArgumentParser(description="Query existing tuning trials and update tuning summary artifacts after confirmation.")
     parser.add_argument("--source", default="latest", help="Tuning session directory, or 'latest'.")
     parser.add_argument("--tuning-dir", default="outputs/tuning", help="Root directory used when --source latest.")
     parser.add_argument("--metric", help="Validation metric used to select one trial, such as rmse, mae, nll, or crps.")
     parser.add_argument("--show", action="store_true", help="Show the best trial for common validation metrics.")
-    parser.add_argument("--apply", action="store_true", help="Ask for confirmation, then update best_params.json and best_config.yaml.")
-    parser.add_argument("--dry-run", action="store_true", help="Show selected trial and changes without writing.")
+    parser.add_argument("--yes", action="store_true", help="Apply changes without asking for confirmation.")
+    parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in console output.")
     return parser
 
 
@@ -231,9 +257,10 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     tuning_run = resolve_source(args.source, args.tuning_dir)
+    color = not args.no_color
 
     if args.show:
-        print(format_show_summary(tuning_run))
+        print(format_show_summary(tuning_run, color=color))
 
     if not args.metric:
         if args.show:
@@ -242,22 +269,20 @@ def main() -> None:
 
     selected = select_best_trial(tuning_run, args.metric)
     changes = build_artifact_changes(tuning_run, selected)
-    print(format_selection(selected, changes))
+    print(format_selection(selected, changes, color=color))
 
-    if args.dry_run:
-        print("Mode: dry-run")
-        return
-    if not args.apply:
-        print("Preview only. Add --apply to update the target config.")
-        return
-
-    try:
-        answer = input("Apply these changes? [y/N] ").strip().lower()
-    except EOFError:
-        answer = ""
-    if answer not in {"y", "yes"}:
+    if not any(change.status == "changed" for change in changes):
         print("No changes written.")
         return
+
+    if not args.yes:
+        try:
+            answer = input("Apply these changes? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in {"y", "yes"}:
+            print("No changes written.")
+            return
 
     update_tuning_artifacts(tuning_run, selected)
     print(f"Updated tuning artifacts in {tuning_run}")
@@ -294,6 +319,12 @@ def _parse_param_value(name: str, value: str) -> Any:
     if name in {"lr", "kl_beta"}:
         return float(value)
     return value
+
+
+def _color(text: str, code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{code}{text}{ANSI_RESET}"
 
 
 if __name__ == "__main__":

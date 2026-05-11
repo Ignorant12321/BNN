@@ -23,9 +23,9 @@ training:
   persistent_workers: false
   amp: true
   cudnn_benchmark: true
-  lr: 0.002107611998111633
+  lr: 0.0016651034749570566
   weight_decay: 0.0001
-  kl_beta: 1.7133414971585625e-05
+  kl_beta: 1.468123652880673e-05
   patience: 30
 prediction:
   mc_samples: 50

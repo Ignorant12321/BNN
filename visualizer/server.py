@@ -1,4 +1,11 @@
-"""Local server for the static visualizer and its editable JSON state."""
+"""Local server for the static visualizer and its editable JSON state.
+
+启动方式：
+1. 在项目根目录执行 `python visualizer/server.py`。
+2. 浏览器打开终端输出的地址，默认是 http://127.0.0.1:5177/。
+3. 如需换端口：`python visualizer/server.py --port 5178`。
+4. 按 Ctrl+C 停止服务。
+"""
 
 from __future__ import annotations
 
@@ -56,7 +63,29 @@ def resolve_run_note_path(relative_path: Any, project_root: Path = PROJECT_ROOT)
     note_path = (root / run_path / "note.txt").resolve()
     if note_path != root and root not in note_path.parents:
         raise ValueError("Run note path must stay inside the project")
+    if not note_path.parent.is_dir():
+        suffix_matches = find_run_dirs_by_suffix(run_path, root)
+        if len(suffix_matches) == 1:
+            return suffix_matches[0] / "note.txt"
+        if len(suffix_matches) > 1:
+            raise ValueError(f"Run path is ambiguous: {run_path}")
     return note_path
+
+
+def find_run_dirs_by_suffix(run_path: str, project_root: Path) -> list[Path]:
+    suffix = normalize_run_path(run_path)
+    if not suffix:
+        return []
+
+    run_name = suffix.split("/")[-1]
+    matches: list[Path] = []
+    for path in project_root.rglob(run_name):
+        if not path.is_dir():
+            continue
+        relative = path.resolve().relative_to(project_root).as_posix()
+        if relative == suffix or relative.endswith(f"/{suffix}"):
+            matches.append(path.resolve())
+    return sorted(matches)
 
 
 def write_run_note(relative_path: Any, note: Any, project_root: Path = PROJECT_ROOT) -> Path:

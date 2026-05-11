@@ -33,6 +33,14 @@
           <span>搜索 run</span>
           <input id="runSearch" type="search" placeholder="smoke / 193755" />
         </label>
+        <label class="sidebar-filter">
+          <span>显示范围</span>
+          <select id="runVisibilityFilter">
+            <option value="all">全部</option>
+            <option value="visible">仅可见</option>
+            <option value="hidden">仅不可见</option>
+          </select>
+        </label>
         <div id="runList" class="run-list">
           <p class="empty">还没有添加实验文件夹。</p>
         </div>

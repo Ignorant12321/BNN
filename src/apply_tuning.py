@@ -1,5 +1,18 @@
 """Apply Optuna best parameters to the default training config.
 
+用法说明：
+1. `python -m src.apply_tuning`
+   读取最新 tuning 会话的 `best_params.json`，预览将写入
+   `configs/default.yaml` 的参数变化，输入 `y` 或 `yes` 后才真正写入。
+2. `python -m src.apply_tuning --objective rmse`
+   指定使用 latest tuning 会话中按 `rmse` 选择的 best params。
+3. `python -m src.apply_tuning --source outputs/tuning/YYYYMMDD-HHMMSS/best_params.json`
+   从指定的 `best_params.json` 迁移参数。
+4. `python -m src.apply_tuning --yes`
+   跳过确认直接写入，适合脚本或自动化流程。
+5. `python -m src.apply_tuning --no-color`
+   关闭终端彩色输出。
+
 The command intentionally migrates only the parameters searched in
 ``src.tune``. It does not copy ``best_config.yaml`` wholesale, so unrelated
 changes in tuning configs cannot leak into the formal training config.
@@ -15,6 +28,11 @@ from typing import Any
 
 from src.utils import load_config, save_config
 
+
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_PURPLE = "\033[35m"
+ANSI_BLUE = "\033[34m"
 
 PARAM_PATHS = {
     "hidden_dim": ("model", "hidden_dim"),
@@ -67,18 +85,23 @@ def resolve_default_objective(config_path: str | Path = "configs/tuning.yaml") -
 
 
 def find_latest_best_params(tuning_dir: str | Path = "outputs/tuning", objective_metric: str | None = None) -> Path:
-    """Return the newest timestamped tuning summary, optionally filtered by objective."""
+    """Return the newest timestamped tuning summary, optionally guarded by objective."""
     tuning_path = Path(tuning_dir)
     candidates = sorted(tuning_path.glob("*/best_params.json"), key=lambda path: path.parent.name)
-    if objective_metric is not None:
-        candidates = [path for path in candidates if load_summary_objective(path) == objective_metric]
     if not candidates:
-        suffix = f" for objective_metric={objective_metric!r}" if objective_metric is not None else ""
-        raise FileNotFoundError(f"No best_params.json found under {tuning_path}{suffix}")
-    return candidates[-1]
+        raise FileNotFoundError(f"No best_params.json found under {tuning_path}")
+    latest = candidates[-1]
+    if objective_metric is not None:
+        latest_objective = load_summary_objective(latest)
+        if latest_objective != objective_metric:
+            raise FileNotFoundError(
+                f"Latest best_params.json is {latest} with objective_metric={latest_objective!r}, "
+                f"not objective_metric={objective_metric!r}"
+            )
+    return latest
 
 
-def apply_best_params(source: str | Path, target: str | Path, dry_run: bool = False) -> list[ParamChange]:
+def apply_best_params(source: str | Path, target: str | Path, write: bool = True) -> list[ParamChange]:
     """Apply supported best parameters to a YAML config and report every touched value."""
     best_params = load_best_params(source)
     config = load_config(target)
@@ -99,15 +122,18 @@ def apply_best_params(source: str | Path, target: str | Path, dry_run: bool = Fa
             section[value_name] = new_value
             has_write = True
 
-    if has_write and not dry_run:
+    if has_write and write:
         save_config(config, target)
 
     return changes
 
 
-def format_change(change: ParamChange) -> str:
+def format_change(change: ParamChange, color: bool = False) -> str:
     """Format one change line for CLI output."""
-    return f"{change.path}: {change.old} -> {change.new} ({change.status})"
+    status_color = ANSI_GREEN if change.status == "changed" else ANSI_PURPLE
+    path = _color(change.path, ANSI_BLUE, color)
+    status = _color(f"({change.status})", status_color, color)
+    return f"{path}: {change.old} -> {change.new} {status}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,7 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="configs/tuning.yaml", help="Tuning config used to resolve the default objective.")
     parser.add_argument("--target", default="configs/default.yaml", help="YAML config to update.")
     parser.add_argument("--tuning-dir", default="outputs/tuning", help="Directory used when --source latest.")
-    parser.add_argument("--dry-run", action="store_true", help="Print changes without writing the target config.")
+    parser.add_argument("--yes", action="store_true", help="Apply changes without asking for confirmation.")
+    parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in console output.")
     return parser
 
 
@@ -142,24 +169,44 @@ def main() -> None:
             parser.exit(
                 1,
                 f"error: {exc}\n"
-                f"Use `python -m src.select_tuning --source latest --metric {objective} --apply` "
+                f"Use `python -m src.select_tuning --source latest --metric {objective}` "
                 "to select that metric from an existing tuning run first.\n",
             )
     else:
         source = Path(args.source)
-    changes = apply_best_params(source, args.target, dry_run=args.dry_run)
+    changes = apply_best_params(source, args.target, write=False)
+    color = not args.no_color
 
-    print(f"Source: {source}")
-    print(f"Target: {args.target}")
+    print(f"{_color('Source:', ANSI_GREEN, color)} {source}")
+    print(f"{_color('Target:', ANSI_GREEN, color)} {args.target}")
     if args.source == "latest":
-        print(f"Objective: {objective}")
-    if args.dry_run:
-        print("Mode: dry-run")
+        print(f"{_color('Objective:', ANSI_PURPLE, color)} {objective}")
     if not changes:
         print("No supported parameters found in best_params.json.")
         return
     for change in changes:
-        print(format_change(change))
+        print(format_change(change, color=color))
+    if not any(change.status == "changed" for change in changes):
+        print("No changes written.")
+        return
+
+    if not args.yes:
+        try:
+            answer = input("Apply these changes? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in {"y", "yes"}:
+            print("No changes written.")
+            return
+
+    apply_best_params(source, args.target, write=True)
+    print(f"Updated target config: {args.target}")
+
+
+def _color(text: str, code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{code}{text}{ANSI_RESET}"
 
 
 if __name__ == "__main__":

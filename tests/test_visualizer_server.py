@@ -31,6 +31,16 @@ def test_resolve_run_note_path_stays_inside_project(tmp_path: Path) -> None:
     assert note_path == tmp_path / "outputs" / "b" / "20260510-193755" / "note.txt"
 
 
+def test_resolve_run_note_path_accepts_unique_run_suffix(tmp_path: Path) -> None:
+    server = load_server_module()
+    run_dir = tmp_path / "outputs" / "improved_bnn" / "20260510-193755"
+    run_dir.mkdir(parents=True)
+
+    note_path = server.resolve_run_note_path("improved_bnn/20260510-193755", project_root=tmp_path)
+
+    assert note_path == run_dir / "note.txt"
+
+
 def test_resolve_run_note_path_rejects_escape(tmp_path: Path) -> None:
     server = load_server_module()
 

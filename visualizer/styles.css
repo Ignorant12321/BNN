@@ -264,7 +264,8 @@ body.sidebar-collapsed .sidebar {
   padding: 14px;
 }
 
-.sidebar-search {
+.sidebar-search,
+.sidebar-filter {
   display: grid;
   gap: 7px;
   padding: 12px 14px 0;
@@ -273,7 +274,12 @@ body.sidebar-collapsed .sidebar {
   font-weight: 800;
 }
 
-.sidebar-search input {
+.sidebar-filter {
+  padding-top: 10px;
+}
+
+.sidebar-search input,
+.sidebar-filter select {
   width: 100%;
 }
 

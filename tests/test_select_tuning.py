@@ -9,7 +9,7 @@ import sys
 
 import yaml
 
-from src.select_tuning import find_latest_tuning_run, select_best_trial
+from src.select_tuning import ArtifactChange, find_latest_tuning_run, format_selection, select_best_trial
 
 
 def write_tuning_run(base):
@@ -105,7 +105,22 @@ def test_find_latest_tuning_run_uses_newest_directory_with_trials_csv(tmp_path):
     assert find_latest_tuning_run(tmp_path / "nested") == new_dir
 
 
-def test_select_tuning_cli_dry_run_prints_artifact_changes_without_writing(tmp_path):
+def test_format_selection_can_color_headings_metrics_and_change_status(tmp_path):
+    selected = select_best_trial(write_tuning_run(tmp_path), "rmse")
+    text = format_selection(
+        selected,
+        [ArtifactChange("best_params.json best_trial", 0, 1)],
+        color=True,
+    )
+
+    assert "\033[32mSelected trial:\033[0m 1" in text
+    assert "\033[35mmetric:\033[0m rmse=8.000000" in text
+    assert "  rmse: 8.000000" in text
+    assert "\033[34mArtifact changes:\033[0m" in text
+    assert "\033[32m(changed)\033[0m" in text
+
+
+def test_select_tuning_cli_previews_and_waits_for_confirmation(tmp_path):
     tuning_dir = tmp_path / "tuning"
     run_dir = write_tuning_run(tuning_dir)
 
@@ -118,8 +133,9 @@ def test_select_tuning_cli_dry_run_prints_artifact_changes_without_writing(tmp_p
             str(tuning_dir),
             "--metric",
             "rmse",
-            "--dry-run",
+            "--no-color",
         ],
+        input="n\n",
         capture_output=True,
         text=True,
     )
@@ -129,35 +145,16 @@ def test_select_tuning_cli_dry_run_prints_artifact_changes_without_writing(tmp_p
     assert "metric: rmse=8.000000" in result.stdout
     assert "best_params.json objective_metric: crps -> rmse (changed)" in result.stdout
     assert "best_params.json best_trial: 0 -> 1 (changed)" in result.stdout
+    assert "Apply these changes? [y/N]" in result.stdout
+    assert "No changes written." in result.stdout
     summary = json.loads((run_dir / "best_params.json").read_text(encoding="utf-8"))
     assert summary["objective_metric"] == "crps"
     assert summary["best_trial"] == 0
 
 
-def test_select_tuning_cli_apply_waits_for_confirmation(tmp_path):
+def test_select_tuning_cli_yes_updates_artifacts_without_prompt(tmp_path):
     tuning_dir = tmp_path / "tuning"
     run_dir = write_tuning_run(tuning_dir)
-
-    declined = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "src.select_tuning",
-            "--tuning-dir",
-            str(tuning_dir),
-            "--metric",
-            "rmse",
-            "--apply",
-        ],
-        input="n\n",
-        capture_output=True,
-        text=True,
-    )
-
-    assert declined.returncode == 0, declined.stderr
-    assert "Apply these changes? [y/N]" in declined.stdout
-    assert "No changes written." in declined.stdout
-    assert json.loads((run_dir / "best_params.json").read_text(encoding="utf-8"))["best_trial"] == 0
 
     confirmed = subprocess.run(
         [
@@ -168,14 +165,15 @@ def test_select_tuning_cli_apply_waits_for_confirmation(tmp_path):
             str(tuning_dir),
             "--metric",
             "rmse",
-            "--apply",
+            "--yes",
+            "--no-color",
         ],
-        input="y\n",
         capture_output=True,
         text=True,
     )
 
     assert confirmed.returncode == 0, confirmed.stderr
+    assert "Apply these changes? [y/N]" not in confirmed.stdout
     assert "Updated tuning artifacts" in confirmed.stdout
     summary = json.loads((run_dir / "best_params.json").read_text(encoding="utf-8"))
     assert summary["objective_metric"] == "rmse"
@@ -188,7 +186,7 @@ def test_select_tuning_cli_apply_waits_for_confirmation(tmp_path):
     assert best_config["tuning"]["objective_metric"] == "rmse"
 
 
-def test_select_tuning_cli_apply_without_stdin_defaults_to_no_changes(tmp_path):
+def test_select_tuning_cli_without_stdin_defaults_to_no_changes(tmp_path):
     tuning_dir = tmp_path / "tuning"
     run_dir = write_tuning_run(tuning_dir)
 
@@ -201,7 +199,7 @@ def test_select_tuning_cli_apply_without_stdin_defaults_to_no_changes(tmp_path):
             str(tuning_dir),
             "--metric",
             "rmse",
-            "--apply",
+            "--no-color",
         ],
         capture_output=True,
         text=True,
@@ -230,9 +228,9 @@ def test_apply_tuning_can_apply_metric_selected_by_select_tuning(tmp_path):
             str(tuning_dir),
             "--metric",
             "rmse",
-            "--apply",
+            "--yes",
+            "--no-color",
         ],
-        input="yes\n",
         capture_output=True,
         text=True,
     )
@@ -249,6 +247,8 @@ def test_apply_tuning_can_apply_metric_selected_by_select_tuning(tmp_path):
             "rmse",
             "--target",
             str(target_path),
+            "--yes",
+            "--no-color",
         ],
         capture_output=True,
         text=True,
