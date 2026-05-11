@@ -84,6 +84,7 @@ python -m src.select_tuning --source latest --show
 python -m src.select_tuning --source latest --metric crps
 python -m src.apply_tuning --objective crps
 python -m src.train --config configs/default.yaml --note "final config"
+python -m src.compare_models --config configs/compare.yaml
 ```
 
 ## 工程目录
@@ -105,6 +106,7 @@ BNN/
 │   ├── features.py           # 特征工程与特征分组
 │   ├── dataset.py            # 时间切分、滑动窗口和 Dataset
 │   ├── train.py              # 主训练入口
+│   ├── compare_models.py     # 模型对比实验入口
 │   ├── evaluate_model.py     # 重新评估已有 run
 │   ├── evaluation_pipeline.py # 评估、预测导出和图像生成
 │   ├── predict.py            # MC 推理与预测区间计算
@@ -230,6 +232,18 @@ python -m src.train --config configs/default.yaml --note "best optuna config"
 ```bash
 python -m src.evaluate_model --run-dir outputs/improved_bnn/YYYYMMDD-HHMMSS --split test
 python -m src.evaluate_model --run-dir outputs/improved_bnn/YYYYMMDD-HHMMSS --split both --mc-samples 50
+```
+
+模型对比实验：
+
+```bash
+python -m src.compare_models --config configs/compare.yaml
+```
+
+对比实验会按 `compare.models` 依次训练模型，并汇总测试集指标到：
+
+```text
+outputs/comparison/model_metrics.csv
 ```
 
 ## 调参与参数迁移
@@ -440,5 +454,5 @@ pytest -q
 ## 当前限制
 
 1. `weather` 使用预测窗口内真实气象观测替代 NWP，实验结论应表述为数据集限制下的模拟预测设定。
-2. `configs/compare.yaml` 已列出 baseline 对比项，但统一 baseline 训练流程仍需继续完善。
-3. 当前实验主要基于 Plant 1 单电站数据，跨季节和跨电站泛化能力还需要更多数据验证。
+2. 当前实验主要基于 Plant 1 单电站数据，跨季节和跨电站泛化能力还需要更多数据验证。
+3. baseline 已接入统一训练流程，但正式报告仍建议补充多随机种子结果和消融实验。

@@ -36,3 +36,18 @@ def test_evaluate_model_help_works_when_executed_directly() -> None:
     assert result.returncode == 0, result.stderr
     assert "--run-dir" in result.stdout
     assert "--split" in result.stdout
+
+
+def test_compare_models_help_works_without_starting_training() -> None:
+    """模型对比入口应支持 --help，避免误触后直接开始训练。"""
+    repo_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [sys.executable, "-m", "src.compare_models", "--help"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--config" in result.stdout

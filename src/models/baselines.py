@@ -1,7 +1,10 @@
 """对比模型结构。
 
-这些 baseline 用于论文中的消融或对比实验。当前训练主流程优先支持
-ImprovedBayesianPVNet；baseline 类已经放在这里，后续可以接入统一训练器。
+这些 baseline 用于论文中的消融或对比实验。为了复用主训练、评估和可视化
+流水线，接入训练流程的 baseline 统一输出 ``(mean, log_var)``，并提供
+``kl_loss()`` 方法。确定性 baseline 的不确定性来自可学习的逐 horizon
+方差参数；MC Dropout baseline 在推理时还会通过 dropout 多次前向传播产生
+模型不确定性。
 """
 
 from __future__ import annotations
@@ -80,3 +83,105 @@ class MCDropoutPVNet(CNNMLPBaseline):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, horizon),
         )
+
+
+class ProbabilisticBaselineMixin:
+    """为确定性 baseline 补齐主训练流程需要的概率预测接口。"""
+
+    horizon: int
+    log_var: nn.Parameter
+
+    def _expand_log_var(self, mean: torch.Tensor) -> torch.Tensor:
+        """把逐 horizon 方差参数扩展到当前 batch。"""
+        return self.log_var.unsqueeze(0).expand_as(mean)
+
+    def kl_loss(self) -> torch.Tensor:
+        """确定性 baseline 没有 BayesianLinear，KL 项为 0。"""
+        return self.log_var.new_zeros(())
+
+
+class MLPProbabilisticBaseline(nn.Module, ProbabilisticBaselineMixin):
+    """展平 history/weather/direct 后输入 MLP 的概率 baseline。"""
+
+    def __init__(
+        self,
+        history_features: int,
+        weather_features: int,
+        direct_features: int,
+        lookback: int,
+        horizon: int,
+        hidden_dim: int = 128,
+    ):
+        super().__init__()
+        self.horizon = horizon
+        input_dim = history_features * lookback + weather_features * horizon + direct_features
+        self.point_model = MLPBaseline(input_dim=input_dim, horizon=horizon, hidden_dim=hidden_dim)
+        self.log_var = nn.Parameter(torch.zeros(horizon))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回未来 horizon 步的均值和可学习对数方差。"""
+        parts = [
+            batch["history"].flatten(start_dim=1),
+            batch["weather"].flatten(start_dim=1),
+        ]
+        direct = batch["direct"]
+        if direct.ndim == 1:
+            direct = direct.unsqueeze(-1)
+        parts.append(direct)
+        mean = self.point_model(torch.cat(parts, dim=-1))
+        return mean, self._expand_log_var(mean)
+
+
+class CNNProbabilisticBaseline(CNNBaseline, ProbabilisticBaselineMixin):
+    """只使用历史功率 CNN 的概率 baseline。"""
+
+    def __init__(self, history_features: int, horizon: int, hidden_dim: int = 64):
+        super().__init__(history_features=history_features, horizon=horizon, hidden_dim=hidden_dim)
+        self.horizon = horizon
+        self.log_var = nn.Parameter(torch.zeros(horizon))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回 CNN 点预测均值和可学习对数方差。"""
+        mean = super().forward(batch)
+        return mean, self._expand_log_var(mean)
+
+
+class CNNMLPProbabilisticBaseline(CNNMLPBaseline, ProbabilisticBaselineMixin):
+    """CNN 历史分支 + MLP 天气分支的概率 baseline。"""
+
+    def __init__(self, history_features: int, weather_features: int, horizon: int, hidden_dim: int = 64):
+        super().__init__(history_features=history_features, weather_features=weather_features, horizon=horizon, hidden_dim=hidden_dim)
+        self.horizon = horizon
+        self.log_var = nn.Parameter(torch.zeros(horizon))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回多分支点预测均值和可学习对数方差。"""
+        mean = super().forward(batch)
+        return mean, self._expand_log_var(mean)
+
+
+class MCDropoutProbabilisticBaseline(MCDropoutPVNet, ProbabilisticBaselineMixin):
+    """MC Dropout 概率 baseline，接口与 BNN 主模型一致。"""
+
+    def __init__(
+        self,
+        history_features: int,
+        weather_features: int,
+        horizon: int,
+        hidden_dim: int = 64,
+        dropout: float = 0.2,
+    ):
+        super().__init__(
+            history_features=history_features,
+            weather_features=weather_features,
+            horizon=horizon,
+            hidden_dim=hidden_dim,
+            dropout=dropout,
+        )
+        self.horizon = horizon
+        self.log_var = nn.Parameter(torch.zeros(horizon))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回 MC Dropout 均值样本和可学习对数方差。"""
+        mean = super().forward(batch)
+        return mean, self._expand_log_var(mean)

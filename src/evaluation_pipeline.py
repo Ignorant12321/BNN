@@ -90,20 +90,64 @@ def load_or_build_splits(config: dict) -> TimeSplits:
 
 
 def build_model(config: dict, columns: FeatureColumns, device):
-    """按配置构造模型。当前独立评估仅支持 improved_bnn。"""
+    """按配置构造主模型或 baseline。"""
+    from src.models.baselines import (
+        CNNMLPProbabilisticBaseline,
+        CNNProbabilisticBaseline,
+        MCDropoutProbabilisticBaseline,
+        MLPProbabilisticBaseline,
+    )
     from src.models.improved_bnn import ImprovedBayesianPVNet
 
-    if config["model"].get("name", "improved_bnn") != "improved_bnn":
-        raise ValueError("evaluate_model currently supports only improved_bnn checkpoints")
-    return ImprovedBayesianPVNet(
-        history_features=len(columns.history),
-        weather_features=len(columns.weather),
-        direct_features=len(columns.direct),
-        horizon=config["data"]["horizon"],
-        hidden_dim=config["model"]["hidden_dim"],
-        branch_dim=config["model"]["branch_dim"],
-        prior_sigma=config["model"]["prior_sigma"],
-    ).to(device)
+    model_name = config["model"].get("name", "improved_bnn")
+    horizon = int(config["data"]["horizon"])
+    hidden_dim = int(config["model"].get("hidden_dim", 128))
+    branch_dim = int(config["model"].get("branch_dim", hidden_dim))
+
+    if model_name == "improved_bnn":
+        model = ImprovedBayesianPVNet(
+            history_features=len(columns.history),
+            weather_features=len(columns.weather),
+            direct_features=len(columns.direct),
+            horizon=horizon,
+            hidden_dim=hidden_dim,
+            branch_dim=branch_dim,
+            prior_sigma=config["model"].get("prior_sigma", 1.0),
+        )
+    elif model_name == "mlp_baseline":
+        model = MLPProbabilisticBaseline(
+            history_features=len(columns.history),
+            weather_features=len(columns.weather),
+            direct_features=len(columns.direct),
+            lookback=int(config["data"]["lookback"]),
+            horizon=horizon,
+            hidden_dim=hidden_dim,
+        )
+    elif model_name == "cnn_baseline":
+        model = CNNProbabilisticBaseline(
+            history_features=len(columns.history),
+            horizon=horizon,
+            hidden_dim=branch_dim,
+        )
+    elif model_name == "cnn_mlp_baseline":
+        model = CNNMLPProbabilisticBaseline(
+            history_features=len(columns.history),
+            weather_features=len(columns.weather),
+            horizon=horizon,
+            hidden_dim=branch_dim,
+        )
+    elif model_name == "mc_dropout":
+        model = MCDropoutProbabilisticBaseline(
+            history_features=len(columns.history),
+            weather_features=len(columns.weather),
+            horizon=horizon,
+            hidden_dim=branch_dim,
+            dropout=float(config["model"].get("dropout", 0.2)),
+        )
+    else:
+        supported = "improved_bnn, mlp_baseline, cnn_baseline, cnn_mlp_baseline, mc_dropout"
+        raise ValueError(f"unsupported model.name {model_name!r}; supported values: {supported}")
+    return model.to(device)
 
 
 def predict_in_original_scale(model, loader, device, scalers, mc_samples: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
