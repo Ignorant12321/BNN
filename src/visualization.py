@@ -10,6 +10,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from src.metrics import horizon_metrics, pinaw, picp
 from src.predict import interval_from_mean_std
@@ -113,6 +114,68 @@ def plot_calibration_curve(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray
     plt.plot([0, 1], [0, 1], linestyle="--", label="ideal")
     plt.xlabel("Nominal coverage")
     plt.ylabel("Observed coverage")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=160)
+    plt.close()
+
+
+def plot_model_prediction_mean(
+    predictions_by_model: dict[str, pd.DataFrame],
+    path: str | Path,
+    max_points: int = 160,
+) -> None:
+    """把多个模型的一步预测均值画在同一张时间序列图上。"""
+    plt.figure(figsize=(10, 4))
+    true_plotted = False
+    for model_name, predictions in predictions_by_model.items():
+        if predictions.empty:
+            continue
+        horizon = int(predictions["horizon"].min())
+        view = predictions[predictions["horizon"] == horizon].sort_values(["sample", "target_time"]).head(max_points)
+        x = np.arange(len(view))
+        if not true_plotted:
+            plt.plot(x, view["y_true"].to_numpy(), label="true", linewidth=1.5, color="black")
+            true_plotted = True
+        plt.plot(x, view["y_mean"].to_numpy(), label=model_name, linewidth=1)
+    plt.xlabel("Step")
+    plt.ylabel("AC Power")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=160)
+    plt.close()
+
+
+def plot_model_horizon_rmse(horizon_rmse: pd.DataFrame, path: str | Path) -> None:
+    """把各模型在不同预测步长上的 RMSE 曲线画在同一张图上。"""
+    plt.figure(figsize=(7, 4))
+    for model_name, group in horizon_rmse.groupby("model", sort=False):
+        group = group.sort_values("horizon")
+        plt.plot(group["horizon"], group["rmse"], marker="o", label=model_name)
+    plt.xlabel("Forecast horizon")
+    plt.ylabel("RMSE")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=160)
+    plt.close()
+
+
+def plot_model_metrics(metrics: pd.DataFrame, path: str | Path, metric_names: list[str] | None = None) -> None:
+    """绘制模型整体指标对比柱状图。"""
+    if metric_names is None:
+        metric_names = [name for name in ["rmse", "mae", "smape", "nrmse"] if name in metrics.columns]
+    if not metric_names:
+        return
+
+    labels = metrics["model"].astype(str).tolist()
+    x = np.arange(len(labels))
+    width = 0.8 / len(metric_names)
+    plt.figure(figsize=(max(7, len(labels) * 1.2), 4))
+    for index, metric_name in enumerate(metric_names):
+        offset = (index - (len(metric_names) - 1) / 2) * width
+        plt.bar(x + offset, metrics[metric_name].astype(float).to_numpy(), width=width, label=metric_name)
+    plt.xticks(x, labels, rotation=20, ha="right")
+    plt.ylabel("Metric value")
     plt.legend()
     plt.tight_layout()
     plt.savefig(path, dpi=160)

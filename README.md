@@ -240,10 +240,24 @@ python -m src.evaluate_model --run-dir outputs/improved_bnn/YYYYMMDD-HHMMSS --sp
 python -m src.compare_models --config configs/compare.yaml
 ```
 
-对比实验会按 `compare.models` 依次训练模型，并汇总测试集指标到：
+当前 `configs/compare.yaml` 默认对比以下模型：
+
+| 模型名 | 简要说明 |
+| --- | --- |
+| `improved_bnn` | 主模型。历史功率 CNN 分支、未来天气 MLP 分支和上一时刻功率直接输入融合后，使用 BayesianLinear 输出均值和方差。 |
+| `mlp_baseline` | 简单 MLP 基线。将历史功率、未来天气和直接输入展平后输入全连接网络，用于检验复杂分支结构是否有收益。 |
+| `cnn_baseline` | 历史序列 CNN 基线。只使用过去功率序列预测未来出力，用于衡量未来天气输入带来的增益。 |
+| `mc_dropout` | MC Dropout 概率基线。使用 CNN + MLP 分支结构，并在推理时通过 dropout 多次前向传播估计模型不确定性。 |
+
+对比实验会按 `compare.models` 依次训练模型。每次运行会创建一个独立时间戳目录，汇总表和各模型完整训练产物都会放在其中：
 
 ```text
-outputs/comparison/model_metrics.csv
+outputs/compare/YYYYMMDD-HHMMSS/
+├── model_metrics.csv
+├── improved_bnn/YYYYMMDD-HHMMSS/
+├── mlp_baseline/YYYYMMDD-HHMMSS/
+├── cnn_baseline/YYYYMMDD-HHMMSS/
+└── mc_dropout/YYYYMMDD-HHMMSS/
 ```
 
 ## 调参与参数迁移
