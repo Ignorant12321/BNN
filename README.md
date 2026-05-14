@@ -391,6 +391,73 @@ outputs/improved_bnn/YYYYMMDD-HHMMSS/
 
 主模型位于 `src/models/improved_bnn.py`，类名为 `ImprovedBayesianPVNet`。
 
+代码对应的分层结构如下：
+
+<table>
+  <thead>
+    <tr>
+      <th>层数</th>
+      <th>第一部分：未来天气 MLP</th>
+      <th>第二部分：历史功率 CNN</th>
+      <th>第三部分：直接输入</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>输入层<br><code>weather [B, 16, 4]</code></td>
+      <td>输入层<br><code>history [B, 16, 1]</code></td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>全连接层<br><code>Linear(4 * 16, 32)</code></td>
+      <td>1D 卷积层<br><code>Conv1d(1, branch_dim, kernel_size=5)</code></td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>全连接层<br><code>Linear(32, 64)</code></td>
+      <td>平均池化层<br><code>AvgPool1d(kernel_size=5)</code></td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>全连接层<br><code>Linear(64, branch_dim)</code></td>
+      <td>1D 卷积层<br><code>Conv1d(branch_dim, branch_dim, kernel_size=5)</code></td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>-</td>
+      <td>全局平均池化层<br><code>AdaptiveAvgPool1d(1)</code></td>
+      <td>输入层<br><code>direct [B, 1]</code></td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>-</td>
+      <td>投影层<br><code>Linear(branch_dim, branch_dim)</code></td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td colspan="3">合并层：<code>concat(weather_code, history_code, direct)</code></td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td colspan="3">概率全连接层：<code>BayesianLinear(branch_dim * 2 + 1, hidden_dim)</code></td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td colspan="3">概率全连接层：<code>BayesianLinear(hidden_dim, hidden_dim)</code></td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td colspan="3">输出层：<code>mean_head</code> 和 <code>log_var_head</code>，均为 <code>BayesianLinear(hidden_dim, 16)</code></td>
+    </tr>
+  </tbody>
+</table>
+
 ```text
 history: 过去功率序列 [B, 16, 1]
         -> HistoryCNNBranch

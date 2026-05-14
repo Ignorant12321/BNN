@@ -19,7 +19,7 @@ model:
 
 training:
   device: auto
-  epochs: 200
+  epochs: 100
   batch_size: 128
   num_workers: 0
   pin_memory: true
@@ -38,8 +38,8 @@ tuning:
   study_name: improved_bnn_tuning_crps
   storage: sqlite:///outputs/tuning/optuna.db
   load_if_exists: true
-  n_trials: 500
-  objective_metric: crps
+  n_trials: 30
+  objective_metric: rmse
   search_space:
     hidden_dim: [256]
     branch_dim: [256]
