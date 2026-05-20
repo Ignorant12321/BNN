@@ -1,0 +1,10 @@
+include:
+  - ../data.yaml
+
+data:
+  lookback: 96
+
+model:
+  name: mlp_baseline
+  hidden_dim: 128
+

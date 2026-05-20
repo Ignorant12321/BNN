@@ -1,0 +1,14 @@
+name: lookback
+output_dir: outputs
+
+# 先分别运行 configs/models/bnn_1h.yaml、bnn_4h.yaml、bnn_8h.yaml、bnn_24h.yaml，
+# 再把对应 run 目录填到这里。
+runs:
+  - label: BNN-1h
+    path: outputs/runs/improved_bnn/替换为你的1h-run目录
+  - label: BNN-4h
+    path: outputs/runs/improved_bnn/替换为你的4h-run目录
+  - label: BNN-8h
+    path: outputs/runs/improved_bnn/替换为你的8h-run目录
+  - label: BNN-24h
+    path: outputs/runs/improved_bnn/替换为你的24h-run目录

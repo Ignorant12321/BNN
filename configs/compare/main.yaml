@@ -1,0 +1,13 @@
+name: main
+output_dir: outputs
+
+# 先分别训练模型，再把对应 run 目录填到这里。
+runs:
+  - label: BNN-24h
+    path: outputs/runs/improved_bnn
+  - label: MLP-24h
+    path: outputs/runs/mlp_baseline
+  - label: CNN-24h
+    path: outputs/runs/cnn_baseline
+  - label: MC-Dropout-24h
+    path: outputs/runs/mc_dropout

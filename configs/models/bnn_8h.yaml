@@ -1,0 +1,11 @@
+include:
+  - ../data.yaml
+
+data:
+  lookback: 32
+
+model:
+  name: improved_bnn
+  hidden_dim: 128
+  branch_dim: 64
+

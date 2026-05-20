@@ -1,0 +1,19 @@
+data:
+  generation_path: dataset/Plant_1_Generation_Data.csv
+  weather_path: dataset/Plant_1_Weather_Sensor_Data.csv
+  processed_dir: data/processed
+  train_ratio: 0.7
+  val_ratio: 0.15
+  lookback: 96
+  horizon: 16
+  features:
+    history:
+      - AC_POWER
+    weather:
+      - AMBIENT_TEMPERATURE
+      - MODULE_TEMPERATURE
+      - IRRADIATION
+    direct:
+      - AC_POWER
+    target: AC_POWER
+
