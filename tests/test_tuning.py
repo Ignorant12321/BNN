@@ -95,10 +95,11 @@ def test_run_tuning_uses_sqlite_storage_and_resumes_to_target_trials(tmp_path: P
 
     monkeypatch.setattr(tune_module, "run_training", fake_run_training)
 
-    first = run_tuning(tune_config_path)
+    first = run_tuning(tune_config_path, note="unit tuning search")
     assert len(calls) == 1
     assert first["completed_trials"] == 1
     assert Path(calls[0]["run_dir"]).parent == tmp_path / "outputs" / "tuning" / "unit_bnn" / "runs"
+    assert (tmp_path / "outputs" / "tuning" / "unit_bnn" / "note.txt").read_text(encoding="utf-8") == "unit tuning search\n"
 
     tune_config["n_trials"] = 2
     tune_config_path.write_text(yaml.safe_dump(tune_config), encoding="utf-8")
@@ -115,6 +116,44 @@ def test_run_tuning_uses_sqlite_storage_and_resumes_to_target_trials(tmp_path: P
     assert (tmp_path / "outputs" / "tuning" / "unit_bnn" / "best_run.txt").is_file()
 
 
+def test_run_tuning_writes_default_note_from_tuning_dir_name(tmp_path: Path, monkeypatch):
+    base_config_path = tmp_path / "base.yaml"
+    base_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "output_dir": str(tmp_path / "outputs"),
+                "data": {
+                    "lookback": 1,
+                    "horizon": 1,
+                    "features": {"history": ["h"], "weather": ["w"], "direct": ["d"], "target": "y"},
+                },
+                "model": {"name": "improved_bnn"},
+                "training": {"backend": "numpy", "epochs": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    tune_config_path = tmp_path / "tune.yaml"
+    tune_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "default_note",
+                "base_config": str(base_config_path),
+                "output_dir": str(tmp_path / "outputs"),
+                "n_trials": 0,
+                "metric": "val_rmse",
+                "direction": "minimize",
+                "search_space": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_tuning(tune_config_path)
+
+    assert (tmp_path / "outputs" / "tuning" / "default_note" / "note.txt").read_text(encoding="utf-8") == "default_note\n"
+
+
 def test_create_run_dir_honors_explicit_run_dir(tmp_path: Path):
     run_dir = tmp_path / "outputs" / "tuning" / "study" / "runs" / "trial-0000"
 
@@ -122,3 +161,15 @@ def test_create_run_dir_honors_explicit_run_dir(tmp_path: Path):
 
     assert created == run_dir
     assert created.is_dir()
+
+
+def test_bnn_tuning_configs_use_fixed_batch_size_and_distinct_4h_study():
+    root = Path(__file__).resolve().parents[1]
+    main_config = yaml.safe_load((root / "configs" / "tune" / "bnn.yaml").read_text(encoding="utf-8"))
+    four_hour_config = yaml.safe_load((root / "configs" / "tune" / "bnn_4h.yaml").read_text(encoding="utf-8"))
+
+    assert main_config["search_space"].get("batch_size") is None
+    assert four_hour_config["search_space"].get("batch_size") is None
+    assert four_hour_config["base_config"] == "../models/bnn/4h.yaml"
+    assert four_hour_config["name"] == "bnn_4h_optuna"
+    assert four_hour_config["study_name"] == "bnn_4h_optuna"

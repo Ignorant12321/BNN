@@ -18,6 +18,7 @@ from typing import Any
 
 import yaml
 
+from src.artifacts.run_io import write_run_note
 from src.config import load_config
 from src.experiments.train import run_training
 
@@ -40,8 +41,9 @@ def main() -> None:
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="Tune PV forecasting model hyperparameters with Optuna.")
     parser.add_argument("--config", default="configs/tune/bnn.yaml", help="调参配置文件")
+    parser.add_argument("--note", default=None, help="写入调参输出目录 note.txt 的备注；默认写入输出目录名")
     args = parser.parse_args()
-    result = run_tuning(args.config)
+    result = run_tuning(args.config, note=args.note)
     print(f"Tuning output: {result['tuning_dir']}")
     print(f"Completed trials: {result['completed_trials']}/{result['target_trials']}")
     if result.get("best_value") is not None:
@@ -49,7 +51,7 @@ def main() -> None:
         print(f"Best run: {result.get('best_run', '')}")
 
 
-def run_tuning(config_path: str | Path) -> dict[str, Any]:
+def run_tuning(config_path: str | Path, note: str | None = None) -> dict[str, Any]:
     """读取调参配置并执行 Optuna study。"""
     tune_config_path = Path(config_path)
     tune_config = load_tune_config(tune_config_path)
@@ -57,6 +59,7 @@ def run_tuning(config_path: str | Path) -> dict[str, Any]:
     output_root = Path(tune_config.get("output_dir", "outputs"))
     tuning_dir = output_root / "tuning" / name
     tuning_dir.mkdir(parents=True, exist_ok=True)
+    write_run_note(tuning_dir, note)
     save_yaml(tune_config, tuning_dir / "tuning_config.yaml")
 
     optuna = import_optuna()

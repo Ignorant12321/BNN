@@ -142,11 +142,24 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert "train,mae" in split_metrics
     assert "val,rmse" in split_metrics
     assert "val,picp_90" in split_metrics
-    assert "test,rmse" not in split_metrics
+    assert "test,rmse" in split_metrics
+    assert "test,picp_90" in split_metrics
     assert "nll" not in split_metrics
     loss_curve_path = run_dir / "figures" / "loss_curve.png"
     assert loss_curve_path.is_file()
     assert loss_curve_path.read_bytes().startswith(b"\x89PNG")
+    prediction_path = run_dir / "predictions" / "test.csv"
+    assert prediction_path.is_file()
+    prediction_text = prediction_path.read_text(encoding="utf-8")
+    assert "label,sample,horizon,target,mean,log_var,std,lower_90,upper_90,lower_95,upper_95,target_time" in prediction_text
+    interval_metrics_path = run_dir / "figures" / "prediction_window_metrics.csv"
+    assert interval_metrics_path.is_file()
+    interval_metrics_text = interval_metrics_path.read_text(encoding="utf-8")
+    assert "interval_start,interval_end,mae,rmse,nmae,nrmse,picp_90,pinaw_90,picp_95,pinaw_95" in interval_metrics_text
+    for name in ("prediction_0800_1200.png", "prediction_1000_1400.png", "prediction_1200_1600.png"):
+        prediction_figure = run_dir / "figures" / name
+        assert prediction_figure.is_file()
+        assert prediction_figure.read_bytes().startswith(b"\x89PNG")
     assert (run_dir / "train.log").is_file()
     assert not (run_dir / "logs").exists()
     assert not (run_dir / "metrics").exists()
@@ -165,3 +178,56 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert "Training Process" in log_text
     assert "Training Results" in log_text
     assert "Val RMSE" in log_text
+    assert "Test RMSE" in log_text
+    note_text = (run_dir / "note.txt").read_text(encoding="utf-8")
+    assert note_text == f"{run_dir.name}\n"
+
+
+def test_run_training_writes_note_file_from_argument(tmp_path, monkeypatch):
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    for split_name, values in {
+        "train": [1.0, 2.0, 3.0],
+        "val": [100.0, 101.0, 102.0],
+        "test": [200.0, 201.0, 202.0],
+    }.items():
+        frame = pd.DataFrame(
+            {
+                "DATE_TIME": pd.date_range("2020-01-01", periods=3, freq="15min"),
+                "AC_POWER": values,
+                "AMBIENT_TEMPERATURE": 25.0,
+                "MODULE_TEMPERATURE": 30.0,
+                "IRRADIATION": 0.5,
+            }
+        )
+        frame.to_csv(processed_dir / f"{split_name}.csv", index=False)
+
+    class RecordingModel:
+        def fit(self, arrays):
+            pass
+
+        def __call__(self, batch):
+            return np.zeros((len(batch["direct"]), 1), dtype=np.float32), np.zeros((len(batch["direct"]), 1), dtype=np.float32)
+
+    monkeypatch.setattr(train_module, "build_model", lambda config: RecordingModel())
+    config = {
+        "output_dir": str(tmp_path / "outputs"),
+        "data": {
+            "generation_path": str(tmp_path / "missing_generation.csv"),
+            "weather_path": str(tmp_path / "missing_weather.csv"),
+            "processed_dir": str(processed_dir),
+            "lookback": 2,
+            "horizon": 1,
+            "features": {
+                "history": ["AC_POWER"],
+                "weather": ["AMBIENT_TEMPERATURE", "MODULE_TEMPERATURE", "IRRADIATION"],
+                "direct": ["AC_POWER"],
+                "target": "AC_POWER",
+            },
+        },
+        "model": {"name": "mlp_baseline"},
+    }
+
+    run_dir = run_training(config, note="first bnn trial")
+
+    assert (run_dir / "note.txt").read_text(encoding="utf-8") == "first bnn trial\n"

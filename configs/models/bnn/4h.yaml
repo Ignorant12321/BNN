@@ -1,5 +1,8 @@
 include:
-  - bnn.yaml
-
+- bnn.yaml
 data:
   lookback: 16
+training:
+  lr: 0.000958908024939246
+  weight_decay: 1.065661082111552e-05
+  kl_beta: 2.424070761872135e-07

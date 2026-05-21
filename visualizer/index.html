@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BNN Visualizer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">BNN Local Visualizer</p>
+        <h1>实验结果对比台</h1>
+        <p class="subhead">读取已有 comparison，或从训练 run 创建新的 comparison。</p>
+      </div>
+      <div class="header-actions">
+        <button id="refreshButton" class="button primary" type="button">刷新列表</button>
+        <button id="clearPageButton" class="button" type="button">清空页面</button>
+        <button id="exportButton" class="button" type="button">导出 JSON</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-tabs" role="tablist" aria-label="侧边栏面板">
+          <button class="sidebar-tab active" type="button" role="tab" data-sidebar-tab="read" aria-controls="readControls">读取</button>
+          <button class="sidebar-tab" type="button" role="tab" data-sidebar-tab="create" aria-controls="createControls">创建</button>
+          <button class="sidebar-tab" type="button" role="tab" data-sidebar-tab="nav" aria-controls="navControls">导航</button>
+        </div>
+
+        <section id="readControls" class="control-panel sidebar-panel active" data-sidebar-panel="read">
+          <h2>读取</h2>
+          <label class="field">
+            <span>时间戳文件夹</span>
+            <select id="comparisonSelect"></select>
+          </label>
+          <button id="loadComparisonButton" class="button primary full" type="button">读取对比数据</button>
+          <button id="exitFolderButton" class="button full" type="button">退出当前文件夹</button>
+        </section>
+
+        <section id="createControls" class="control-panel sidebar-panel" data-sidebar-panel="create" hidden>
+          <h2>创建</h2>
+          <label class="field">
+            <span>名称</span>
+            <input id="comparisonNameInput" type="text" value="visualizer" />
+          </label>
+          <label class="field">
+            <span>备注</span>
+            <input id="comparisonNoteInput" type="text" placeholder="optional note" />
+          </label>
+          <input id="trainSearchInput" class="search no-margin" type="search" placeholder="筛选训练 run" />
+          <div id="trainRunList" class="run-list compact-list"></div>
+          <button id="createComparisonButton" class="button primary full" type="button">创建并读取</button>
+        </section>
+
+        <section id="navControls" class="sidebar-panel" data-sidebar-panel="nav" hidden>
+          <div class="sidebar-head">
+            <h2>导航</h2>
+            <span id="runCount">0</span>
+          </div>
+          <nav id="sectionDirectory" class="section-directory" aria-label="页面目录">
+            <button class="nav-link" type="button" data-nav-target="statsSection">概览</button>
+            <button class="nav-link" type="button" data-nav-target="metricSection">指标排行</button>
+            <button class="nav-link" type="button" data-nav-target="predictionSection">预测数据摘要</button>
+            <button class="nav-link" type="button" data-nav-target="configSection">参数差异</button>
+            <button class="nav-link" type="button" data-nav-target="figureSection">对比图像</button>
+          </nav>
+          <input id="searchInput" class="search" type="search" placeholder="搜索 run / model / note" />
+          <div id="runList" class="run-list"></div>
+        </section>
+      </aside>
+      <div id="sidebarResizer" class="sidebar-resizer" role="separator" aria-label="调整侧边栏宽度"></div>
+
+      <section class="content">
+        <section id="statsSection" class="stats-grid"></section>
+
+        <section id="metricSection" class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>指标排行</h2>
+              <p>读取 model_metrics.csv，误差指标越小越好，PICP 按接近目标覆盖率判断。</p>
+            </div>
+            <select id="splitSelect">
+              <option value="test">test</option>
+              <option value="val">val</option>
+              <option value="train">train</option>
+            </select>
+          </div>
+          <div id="metricBoard" class="metric-board"></div>
+        </section>
+
+        <section id="predictionSection" class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>预测数据摘要</h2>
+              <p>读取 predictions/&lt;label&gt;.csv，汇总预测行数、horizon 和平均误差。</p>
+            </div>
+          </div>
+          <div id="predictionTable" class="table-wrap"></div>
+        </section>
+
+        <section id="configSection" class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>参数差异</h2>
+              <p>默认只保留不同实验之间变化的配置项。</p>
+            </div>
+            <label class="switch"><input id="diffOnly" type="checkbox" checked /> 只看差异</label>
+          </div>
+          <div id="configTable" class="table-wrap"></div>
+        </section>
+
+        <section id="figureSection" class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>对比图像</h2>
+              <p>只展示关键对比图：loss 和 prediction。</p>
+            </div>
+            <input id="figureSearch" class="search compact" type="search" placeholder="筛选图片名" />
+          </div>
+          <div id="figureGrid" class="figure-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="lightbox" class="lightbox" aria-hidden="true">
+      <button id="lightboxClose" class="lightbox-close" type="button" aria-label="关闭">×</button>
+      <img id="lightboxImage" alt="" />
+      <p id="lightboxCaption"></p>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

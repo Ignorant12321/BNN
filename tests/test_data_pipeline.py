@@ -37,6 +37,8 @@ def test_load_plant_dataframe_aggregates_generation_and_merges_weather(tmp_path:
     assert frame["DATE_TIME"].tolist() == pd.to_datetime(["2020-05-15 00:00:00", "2020-05-15 00:15:00"]).tolist()
     assert frame["AC_POWER"].tolist() == [5, 9]
     assert frame["DC_POWER"].tolist() == [30, 70]
+    assert frame["SOURCE_COUNT"].tolist() == [2, 2]
+    assert frame["EXPECTED_SOURCE_COUNT"].tolist() == [2, 2]
     assert frame["IRRADIATION"].tolist() == [0.1, 0.2]
 
 
@@ -66,3 +68,43 @@ def test_make_window_arrays_uses_history_weather_direct_and_target():
     np.testing.assert_array_equal(arrays.direct[0], np.array([2.0], dtype=np.float32))
     np.testing.assert_array_equal(arrays.target[0], np.array([3.0, 4.0], dtype=np.float32))
 
+
+def test_make_window_arrays_skips_windows_crossing_time_gaps():
+    frame = pd.DataFrame(
+        {
+            "DATE_TIME": pd.to_datetime(
+                [
+                    "2020-05-15 00:00:00",
+                    "2020-05-15 00:15:00",
+                    "2020-05-15 00:45:00",
+                    "2020-05-15 01:00:00",
+                ]
+            ),
+            "AC_POWER": [1.0, 2.0, 3.0, 4.0],
+            "IRRADIATION": [0.0, 0.0, 0.0, 0.0],
+        }
+    )
+    columns = FeatureColumns(history=["AC_POWER"], weather=["IRRADIATION"], direct=["AC_POWER"], target="AC_POWER")
+
+    arrays = make_window_arrays(frame, columns, lookback=1, horizon=1)
+
+    assert arrays.target_time.tolist() == [["2020-05-15 00:15:00"], ["2020-05-15 01:00:00"]]
+    np.testing.assert_array_equal(arrays.target[:, 0], np.array([2.0, 4.0], dtype=np.float32))
+
+
+def test_make_window_arrays_skips_incomplete_source_windows_when_generating():
+    frame = pd.DataFrame(
+        {
+            "DATE_TIME": pd.date_range("2020-05-15 10:00:00", periods=4, freq="15min"),
+            "AC_POWER": [0.0, 1.0, 2.0, 3.0],
+            "IRRADIATION": [0.0, 0.1, 0.2, 0.3],
+            "SOURCE_COUNT": [22, 21, 22, 22],
+            "EXPECTED_SOURCE_COUNT": [22, 22, 22, 22],
+        }
+    )
+    columns = FeatureColumns(history=["AC_POWER"], weather=["IRRADIATION"], direct=["AC_POWER"], target="AC_POWER")
+
+    arrays = make_window_arrays(frame, columns, lookback=1, horizon=1)
+
+    assert arrays.target_time.tolist() == [["2020-05-15 10:45:00"]]
+    np.testing.assert_array_equal(arrays.target[:, 0], np.array([3.0], dtype=np.float32))

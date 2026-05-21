@@ -82,4 +82,8 @@ def test_project_model_configs_use_nested_defaults():
         assert config["model"]["name"] == model_name
         assert config["data"]["lookback"] == lookback
         assert config["training"]["backend"] == "torch"
-        assert config["training"]["epochs"] == 50
+        assert int(config["training"]["epochs"]) > 0
+        if model_name == "improved_bnn":
+            assert config["training"]["batch_size"] == 64
+            assert config["training"]["early_stopping"]["enabled"] is True
+            assert int(config["training"]["early_stopping"]["patience"]) > 0

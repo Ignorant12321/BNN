@@ -42,6 +42,14 @@ def save_config(config: dict[str, Any], path: Path) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
+def write_run_note(run_dir: Path, note: str | None) -> Path:
+    """写出产物备注；没有备注时使用产物目录名。"""
+    note_text = run_dir.name if note is None else note
+    note_path = run_dir / "note.txt"
+    note_path.write_text(f"{note_text}\n", encoding="utf-8")
+    return note_path
+
+
 def load_run_config(run_dir: str | Path) -> dict[str, Any]:
     """读取训练目录中保存的配置快照。"""
     config_path = Path(run_dir) / "config.yaml"

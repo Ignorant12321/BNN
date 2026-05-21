@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from math import isfinite
 from pathlib import Path
+import csv
+import numpy as np
 
 import matplotlib
 
@@ -13,39 +15,11 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from src.evaluation.metrics import BASE_METRIC_NAMES, regression_metrics
+
 
 DEFAULT_PREDICTION_INTERVALS = (("08:00", "12:00"), ("10:00", "14:00"), ("12:00", "16:00"))
 LINE_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2")
-
-
-def write_metrics_bar_png(rows: list[dict[str, str]], path: Path, metric: str = "test_rmse") -> None:
-    """写出单个指标的模型对比柱状图。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    values = []
-    for row in rows:
-        try:
-            value = float(row.get(metric, row.get(metric.removeprefix("test_"), "nan")))
-        except ValueError:
-            continue
-        if isfinite(value):
-            values.append((row["label"], value))
-
-    fig, ax = plt.subplots(figsize=(7.0, max(2.4, 0.45 * max(len(values), 1) + 1.2)), dpi=140)
-    if values:
-        labels = [label for label, _ in values]
-        metric_values = [value for _, value in values]
-        ax.barh(labels, metric_values, color="#4f8cc9")
-        ax.invert_yaxis()
-        for index, value in enumerate(metric_values):
-            ax.text(value, index, f" {value:.4f}", va="center", fontsize=8)
-        ax.set_xlabel(metric)
-    else:
-        ax.text(0.5, 0.5, "no metric data", ha="center", va="center", transform=ax.transAxes)
-        ax.set_axis_off()
-    ax.set_title(metric)
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
 
 
 def write_training_loss_png(epoch_history: list[dict[str, float]], metrics: dict[str, float], path: Path) -> None:
@@ -93,6 +67,36 @@ def write_prediction_window_pngs(
         write_prediction_window_png(combined, path, start, end)
 
 
+def write_prediction_window_metrics_csv(
+    prediction_frame: pd.DataFrame,
+    path: Path,
+    intervals: tuple[tuple[str, str], ...] = DEFAULT_PREDICTION_INTERVALS,
+) -> None:
+    """Write per-interval metrics for the same windows used by prediction plots."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["interval_start", "interval_end", *BASE_METRIC_NAMES]
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        for start, end in intervals:
+            row = {"interval_start": start, "interval_end": end}
+            row.update(prediction_window_metrics(prediction_frame, start, end))
+            writer.writerow(row)
+
+
+def prediction_window_metrics(frame: pd.DataFrame, start: str, end: str) -> dict[str, float | str]:
+    """Calculate metrics for the first available date inside a clock-time interval."""
+    subset = prediction_window_subset(frame, start, end)
+    if subset.empty:
+        return {name: "" for name in BASE_METRIC_NAMES}
+    metrics = regression_metrics(
+        subset["mean"].to_numpy(dtype=float).reshape(-1, 1),
+        subset["log_var"].to_numpy(dtype=float).reshape(-1, 1),
+        subset["target"].to_numpy(dtype=float).reshape(-1, 1),
+    )
+    return {name: metrics[name] for name in BASE_METRIC_NAMES}
+
+
 def write_prediction_window_png(frame: pd.DataFrame, path: Path, start: str, end: str) -> None:
     """写出一个时间段的预测曲线。"""
     title = f"Prediction {start}-{end}"
@@ -100,26 +104,7 @@ def write_prediction_window_png(frame: pd.DataFrame, path: Path, start: str, end
         write_line_png([], path, title=title, notes=["no target_time data"])
         return
 
-    work = frame.copy()
-    work["_target_time"] = pd.to_datetime(work["target_time"], errors="coerce")
-    work = work.dropna(subset=["_target_time"])
-    if work.empty:
-        write_line_png([], path, title=title, notes=["no target_time data"])
-        return
-
-    start_minute = _time_to_minutes(start)
-    end_minute = _time_to_minutes(end)
-    work["_minute"] = work["_target_time"].dt.hour * 60 + work["_target_time"].dt.minute
-    subset = pd.DataFrame()
-    for date_value in sorted(work["_target_time"].dt.date.unique()):
-        candidate = work[
-            (work["_target_time"].dt.date == date_value)
-            & (work["_minute"] >= start_minute)
-            & (work["_minute"] < end_minute)
-        ]
-        if not candidate.empty:
-            subset = candidate
-            break
+    subset = prediction_window_subset(frame, start, end)
     if subset.empty:
         write_line_png([], path, title=title, notes=["no rows in interval"])
         return
@@ -135,21 +120,80 @@ def write_prediction_window_png(frame: pd.DataFrame, path: Path, start: str, end
     )
     labels = sorted(str(label) for label in subset["label"].dropna().unique())
     for index, label in enumerate(labels):
-        predicted = (
-            subset[subset["label"] == label]
-            .groupby("_target_time", as_index=False)["mean"]
-            .mean()
-            .sort_values("_target_time")
-        )
+        predicted = prediction_interval_bounds(subset, label)
+        ax_color = LINE_COLORS[index % len(LINE_COLORS)]
         series.append(
             {
                 "label": label,
-                "color": LINE_COLORS[index % len(LINE_COLORS)],
+                "color": ax_color,
                 "points": [(row["_target_time"], float(row["mean"])) for _, row in predicted.iterrows()],
+                "intervals": predicted,
             }
         )
     date_note = str(subset["_target_time"].dt.date.iloc[0])
     write_line_png(series, path, title=title, notes=[date_note])
+
+
+def prediction_window_subset(frame: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    """Return rows from the first date containing target_time values inside the interval."""
+    if frame.empty or "target_time" not in frame.columns:
+        return pd.DataFrame()
+    work = frame.copy()
+    work["_target_time"] = pd.to_datetime(work["target_time"], errors="coerce")
+    work = work.dropna(subset=["_target_time"])
+    if work.empty:
+        return pd.DataFrame()
+    start_minute = _time_to_minutes(start)
+    end_minute = _time_to_minutes(end)
+    work["_minute"] = work["_target_time"].dt.hour * 60 + work["_target_time"].dt.minute
+    for date_value in sorted(work["_target_time"].dt.date.unique()):
+        candidate = work[
+            (work["_target_time"].dt.date == date_value)
+            & (work["_minute"] >= start_minute)
+            & (work["_minute"] < end_minute)
+        ]
+        if not candidate.empty:
+            return candidate
+    return pd.DataFrame()
+
+
+def prediction_interval_bounds(frame: pd.DataFrame, label: str) -> pd.DataFrame:
+    """Return mean and 90/95 interval bounds for one label grouped by target time."""
+    work = frame[frame["label"].astype(str) == str(label)].copy()
+    if work.empty:
+        return pd.DataFrame(
+            columns=["_target_time", "mean", "std", "lower_90", "upper_90", "lower_95", "upper_95"]
+        )
+    if "_target_time" not in work.columns:
+        work["_target_time"] = pd.to_datetime(work["target_time"], errors="coerce")
+    work = work.dropna(subset=["_target_time"])
+    work["_mean"] = pd.to_numeric(work["mean"], errors="coerce")
+    work["_variance"] = np.exp(pd.to_numeric(work["log_var"], errors="coerce"))
+    work = work.dropna(subset=["_mean", "_variance"])
+    if work.empty:
+        return pd.DataFrame(
+            columns=["_target_time", "mean", "std", "lower_90", "upper_90", "lower_95", "upper_95"]
+        )
+
+    rows = []
+    for target_time, group in work.groupby("_target_time"):
+        mean_values = group["_mean"].to_numpy(dtype=float)
+        variance_values = group["_variance"].to_numpy(dtype=float)
+        mean = float(np.mean(mean_values))
+        variance = float(np.mean(variance_values + mean_values**2) - mean**2)
+        std = float(np.sqrt(max(variance, 0.0)))
+        rows.append(
+            {
+                "_target_time": target_time,
+                "mean": mean,
+                "std": std,
+                "lower_90": mean - 1.6448536269514722 * std,
+                "upper_90": mean + 1.6448536269514722 * std,
+                "lower_95": mean - 1.959963984540054 * std,
+                "upper_95": mean + 1.959963984540054 * std,
+            }
+        )
+    return pd.DataFrame(rows).sort_values("_target_time").reset_index(drop=True)
 
 
 def write_line_png(series: list[dict], path: Path, title: str, notes: list[str]) -> None:
@@ -164,6 +208,12 @@ def write_line_png(series: list[dict], path: Path, title: str, notes: list[str])
         has_points = True
         x_values = [point[0] for point in points]
         y_values = [point[1] for point in points]
+        intervals = item.get("intervals")
+        if isinstance(intervals, pd.DataFrame) and not intervals.empty:
+            interval_x = intervals["_target_time"]
+            color = item.get("color")
+            ax.fill_between(interval_x, intervals["lower_95"], intervals["upper_95"], color=color, alpha=0.10, linewidth=0)
+            ax.fill_between(interval_x, intervals["lower_90"], intervals["upper_90"], color=color, alpha=0.18, linewidth=0)
         ax.plot(x_values, y_values, label=str(item.get("label", "series")), color=item.get("color"), linewidth=1.8)
 
     ax.set_title(title)

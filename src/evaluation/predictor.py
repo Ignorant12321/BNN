@@ -19,6 +19,7 @@ def predict_dataframe(label: str, model, arrays, config: dict | None = None) -> 
     target_time = getattr(arrays, "target_time", None)
     for sample_index in range(len(mean)):
         for horizon_index in range(mean.shape[1]):
+            interval = prediction_interval_columns(float(mean[sample_index, horizon_index]), float(log_var[sample_index, horizon_index]))
             row = {
                 "label": label,
                 "sample": sample_index,
@@ -26,11 +27,24 @@ def predict_dataframe(label: str, model, arrays, config: dict | None = None) -> 
                 "target": float(target[sample_index, horizon_index]),
                 "mean": float(mean[sample_index, horizon_index]),
                 "log_var": float(log_var[sample_index, horizon_index]),
+                **interval,
             }
             if target_time is not None:
                 row["target_time"] = str(target_time[sample_index, horizon_index])
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def prediction_interval_columns(mean: float, log_var: float) -> dict[str, float]:
+    """Return 90% and 95% Gaussian prediction interval columns for one prediction."""
+    std = float(np.sqrt(np.exp(log_var)))
+    return {
+        "std": std,
+        "lower_90": mean - 1.6448536269514722 * std,
+        "upper_90": mean + 1.6448536269514722 * std,
+        "lower_95": mean - 1.959963984540054 * std,
+        "upper_95": mean + 1.959963984540054 * std,
+    }
 
 
 def predict_arrays(model, arrays, config: dict | None = None) -> tuple[np.ndarray, np.ndarray]:

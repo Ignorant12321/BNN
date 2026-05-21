@@ -22,12 +22,13 @@ from typing import Any
 import numpy as np
 
 from src.artifacts.manifest import build_manifest
-from src.artifacts.run_io import create_run_dir, save_config, save_manifest, save_model_artifact
+from src.artifacts.run_io import create_run_dir, save_config, save_manifest, save_model_artifact, write_run_note
 from src.config import load_config
 from src.data.pv import load_split_window_arrays_from_config
 from src.data.scaling import attach_fitted_scaler, fit_window_scaler, should_scale_torch_training, transform_window_arrays_by_split
 from src.evaluation.metrics import evaluate_arrays
-from src.evaluation.plots import write_training_loss_png
+from src.evaluation.plots import write_prediction_window_metrics_csv, write_prediction_window_pngs, write_training_loss_png
+from src.evaluation.predictor import predict_dataframe
 from src.models.registry import build_model
 from src.torch_runtime import import_torch
 from src.training.trainer import train_model
@@ -37,11 +38,12 @@ def main() -> None:
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="Train one PV forecasting model.")
     parser.add_argument("--config", default="configs/models/bnn/24h.yaml")
+    parser.add_argument("--note", default=None, help="写入当前训练目录 note.txt 的备注；默认写入时间戳目录名")
     args = parser.parse_args()
-    run_training(load_config(args.config))
+    run_training(load_config(args.config), note=args.note)
 
 
-def run_training(config: dict[str, Any]) -> Path:
+def run_training(config: dict[str, Any], note: str | None = None) -> Path:
     """执行一次单模型训练：只用 train split 拟合，并评估 train/val。"""
     started_at = datetime.now()
     started_timer = time.perf_counter()
@@ -50,8 +52,11 @@ def run_training(config: dict[str, Any]) -> Path:
     run_dir = create_run_dir(config)
     models_dir = run_dir / "models"
     figures_dir = run_dir / "figures"
+    predictions_dir = run_dir / "predictions"
     models_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    write_run_note(run_dir, note)
     arrays_by_split = load_or_make_split_arrays(config)
     if getattr(model, "is_torch_model", False) and should_scale_torch_training(config):
         scaler = fit_window_scaler(arrays_by_split)
@@ -63,14 +68,20 @@ def run_training(config: dict[str, Any]) -> Path:
     fit_started_timer = time.perf_counter()
     print_training_process_start(fit_started_at)
     train_result = train_model(model, arrays_by_split, config, epoch_callback=print_epoch_progress)
+    metrics = dict(train_result.metrics)
+    metrics.update({f"test_{name}": value for name, value in evaluate_test_split(model, arrays_by_split, config).items()})
+    test_predictions = predict_dataframe(str(config.get("model", {}).get("name", run_dir.name)), model, arrays_by_split["test"], config=config)
     fit_ended_at = datetime.now()
     fit_duration_seconds = time.perf_counter() - fit_started_timer
     print_training_process_end(fit_ended_at, fit_duration_seconds, train_result.epoch_history)
 
     save_config(config, run_dir / "config.yaml")
     write_epoch_history(run_dir / "epoch_history.csv", train_result.epoch_history)
-    write_split_metrics(run_dir / "metrics.csv", train_result.metrics)
-    write_training_loss_png(train_result.epoch_history, train_result.metrics, figures_dir / "loss_curve.png")
+    write_split_metrics(run_dir / "metrics.csv", metrics)
+    test_predictions.to_csv(predictions_dir / "test.csv", index=False)
+    write_prediction_window_pngs([test_predictions], figures_dir)
+    write_prediction_window_metrics_csv(test_predictions, figures_dir / "prediction_window_metrics.csv")
+    write_training_loss_png(train_result.epoch_history, metrics, figures_dir / "loss_curve.png")
     model_path = save_model_artifact(model, config, models_dir, stem="best")
     ended_at = datetime.now()
     duration_seconds = time.perf_counter() - started_timer
@@ -87,7 +98,7 @@ def run_training(config: dict[str, Any]) -> Path:
         ended_at=ended_at,
         duration_seconds=duration_seconds,
         split_sizes=split_sizes,
-        metrics=train_result.metrics,
+        metrics=metrics,
         epoch_history=train_result.epoch_history,
         model_path=model_path,
     )
@@ -108,7 +119,7 @@ def run_training(config: dict[str, Any]) -> Path:
         run_dir=run_dir,
         ended_at=ended_at,
         duration_seconds=duration_seconds,
-        metrics=train_result.metrics,
+        metrics=metrics,
         log_path=log_path,
         model_path=model_path,
     )
@@ -118,6 +129,16 @@ def run_training(config: dict[str, Any]) -> Path:
 def evaluate_model(model, arrays) -> dict[str, float]:
     """在传入 split 的全部窗口上评估拟合后的模型。"""
     return evaluate_arrays(model, arrays)
+
+
+def evaluate_test_split(model, arrays_by_split: dict[str, Any], config: dict[str, Any]) -> dict[str, float]:
+    """在 test split 上评估最终选中的模型，不参与训练和早停决策。"""
+    test_arrays = arrays_by_split["test"]
+    if getattr(model, "is_torch_model", False):
+        from src.training.torch_trainer import evaluate_torch_model
+
+        return evaluate_torch_model(model, test_arrays, config=config)
+    return evaluate_arrays(model, test_arrays)
 
 
 def set_random_seed(seed: int) -> None:
@@ -160,6 +181,8 @@ def write_epoch_history(path: Path, epoch_history: list[dict[str, float]]) -> No
     fieldnames = ["epoch", "loss"]
     if any("val_rmse" in item for item in epoch_history):
         fieldnames.append("val_rmse")
+    if any("early_stop" in item for item in epoch_history):
+        fieldnames.append("early_stop")
     with path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -167,6 +190,8 @@ def write_epoch_history(path: Path, epoch_history: list[dict[str, float]]) -> No
             row = {"epoch": int(item["epoch"]), "loss": item["loss"]}
             if "val_rmse" in item:
                 row["val_rmse"] = item["val_rmse"]
+            if "early_stop" in item:
+                row["early_stop"] = item["early_stop"]
             writer.writerow(row)
 
 
@@ -315,6 +340,10 @@ def training_result_rows(
         ("Val RMSE", format_metric(metrics.get("val_rmse"))),
         ("Val NMAE", format_metric(metrics.get("val_nmae"))),
         ("Val NRMSE", format_metric(metrics.get("val_nrmse"))),
+        ("Test MAE", format_metric(metrics.get("test_mae"))),
+        ("Test RMSE", format_metric(metrics.get("test_rmse"))),
+        ("Test NMAE", format_metric(metrics.get("test_nmae"))),
+        ("Test NRMSE", format_metric(metrics.get("test_nrmse"))),
         ("Output", str(run_dir)),
         ("Log", str(log_path)),
         ("Model File", str(model_path)),

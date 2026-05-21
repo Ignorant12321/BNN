@@ -35,10 +35,12 @@ def test_run_preprocess_writes_merged_csv(tmp_path: Path):
     frame = pd.read_csv(output_path)
     assert list(frame.columns) == [
         "DATE_TIME",
+        "SOURCE_COUNT",
         "DC_POWER",
         "AC_POWER",
         "DAILY_YIELD",
         "TOTAL_YIELD",
+        "EXPECTED_SOURCE_COUNT",
         "AMBIENT_TEMPERATURE",
         "MODULE_TEMPERATURE",
         "IRRADIATION",
@@ -61,4 +63,3 @@ def test_run_split_writes_chronological_train_val_test_csvs(tmp_path: Path):
     assert len(pd.read_csv(outputs["train"])) == 6
     assert len(pd.read_csv(outputs["val"])) == 2
     assert len(pd.read_csv(outputs["test"])) == 2
-

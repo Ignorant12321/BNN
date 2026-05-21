@@ -56,6 +56,9 @@ DEFAULT_FEATURE_COLUMNS = FeatureColumns(
     target="AC_POWER",
 )
 
+EXPECTED_STEP = pd.Timedelta(minutes=15)
+DAYLIGHT_IRRADIATION_THRESHOLD = 0.02
+
 
 def load_plant_dataframe(generation_path: str | Path, weather_path: str | Path) -> pd.DataFrame:
     """读取并合并逆变器发电 CSV 与天气传感器 CSV。"""
@@ -63,19 +66,23 @@ def load_plant_dataframe(generation_path: str | Path, weather_path: str | Path) 
     weather = pd.read_csv(weather_path)
     generation["DATE_TIME"] = pd.to_datetime(generation["DATE_TIME"], dayfirst=True)
     weather["DATE_TIME"] = pd.to_datetime(weather["DATE_TIME"])
+    expected_source_count = int(generation["SOURCE_KEY"].nunique())
 
     generation_agg = (
         generation.groupby("DATE_TIME", as_index=False)
         .agg(
             {
+                "SOURCE_KEY": "nunique",
                 "DC_POWER": "sum",
                 "AC_POWER": "sum",
                 "DAILY_YIELD": "sum",
                 "TOTAL_YIELD": "sum",
             }
         )
+        .rename(columns={"SOURCE_KEY": "SOURCE_COUNT"})
         .sort_values("DATE_TIME")
     )
+    generation_agg["EXPECTED_SOURCE_COUNT"] = expected_source_count
     weather_agg = (
         weather.groupby("DATE_TIME", as_index=False)
         .agg(
@@ -105,8 +112,24 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
     direct_values = frame[columns.direct].to_numpy(dtype=np.float32)
     target_values = frame[columns.target].to_numpy(dtype=np.float32)
     time_values = None
+    parsed_times = None
     if "DATE_TIME" in frame.columns:
-        time_values = pd.to_datetime(frame["DATE_TIME"]).dt.strftime("%Y-%m-%d %H:%M:%S").to_numpy()
+        parsed_times = pd.to_datetime(frame["DATE_TIME"])
+        time_values = parsed_times.dt.strftime("%Y-%m-%d %H:%M:%S").to_numpy()
+
+    source_counts = None
+    expected_source_counts = None
+    generating_values = None
+    if "SOURCE_COUNT" in frame.columns:
+        source_counts = frame["SOURCE_COUNT"].to_numpy(dtype=np.float32)
+        if "EXPECTED_SOURCE_COUNT" in frame.columns:
+            expected_source_counts = frame["EXPECTED_SOURCE_COUNT"].to_numpy(dtype=np.float32)
+        else:
+            expected_source_counts = np.full(len(frame), np.nanmax(source_counts), dtype=np.float32)
+        irradiation_values = (
+            frame["IRRADIATION"].to_numpy(dtype=np.float32) if "IRRADIATION" in frame.columns else np.zeros(len(frame), dtype=np.float32)
+        )
+        generating_values = (target_values > 0) | (irradiation_values > DAYLIGHT_IRRADIATION_THRESHOLD)
 
     history_windows = []
     weather_windows = []
@@ -116,6 +139,15 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
     for start in range(0, len(frame) - lookback - horizon + 1):
         split = start + lookback
         end = split + horizon
+        if parsed_times is not None and not _has_continuous_15min_steps(parsed_times.iloc[start:end]):
+            continue
+        if source_counts is not None and generating_values is not None:
+            quality_slice = slice(start, end)
+            incomplete_generating_rows = generating_values[quality_slice] & (
+                source_counts[quality_slice] < expected_source_counts[quality_slice]
+            )
+            if incomplete_generating_rows.any():
+                continue
         history_windows.append(history_values[start:split])
         weather_windows.append(weather_values[split:end])
         direct_rows.append(direct_values[split - 1])
@@ -132,6 +164,13 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
         target=np.stack(target_windows).astype(np.float32),
         target_time=np.stack(target_time_windows) if target_time_windows else None,
     )
+
+
+def _has_continuous_15min_steps(times: pd.Series) -> bool:
+    """检查一个窗口内部是否保持 15 分钟连续采样。"""
+    if len(times) <= 1:
+        return True
+    return bool(times.diff().iloc[1:].eq(EXPECTED_STEP).all())
 
 
 def load_window_arrays_from_config(config: dict) -> WindowArrays:

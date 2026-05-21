@@ -8,11 +8,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from src.artifacts.run_io import create_comparison_dir, is_run_dir, resolve_run_path, save_config
+from src.artifacts.run_io import create_comparison_dir, is_run_dir, resolve_run_path, save_config, write_run_note
 from src.config import load_config
 from src.evaluation.metrics import BASE_METRIC_NAMES
 from src.evaluation.evaluator import evaluate_run
-from src.evaluation.plots import write_comparison_loss_png, write_metrics_bar_png, write_prediction_window_pngs
+from src.evaluation.plots import write_comparison_loss_png, write_prediction_window_metrics_csv, write_prediction_window_pngs
 
 
 def main() -> None:
@@ -23,16 +23,17 @@ def main() -> None:
     parser.add_argument("--name", default="comparison", help="本次对比名称，仅在使用 --run 时生效")
     parser.add_argument("--output-dir", default="outputs", help="输出根目录，仅在使用 --run 时生效")
     parser.add_argument("--split", default="test", help="评估 split，默认 test")
+    parser.add_argument("--note", default=None, help="写入对比输出目录 note.txt 的备注；默认写入时间戳目录名")
     args = parser.parse_args()
     if args.run:
         runs = [parse_cli_run(value) for value in args.run]
-        out_dir = run_compare_from_runs(runs, name=args.name, output_dir=args.output_dir, split=args.split)
+        out_dir = run_compare_from_runs(runs, name=args.name, output_dir=args.output_dir, split=args.split, note=args.note)
     else:
-        out_dir = run_compare(args.config or "configs/compare/main.yaml")
+        out_dir = run_compare(args.config or "configs/compare/main.yaml", note=args.note)
     print_compare_console_summary(out_dir / "model_metrics.csv")
 
 
-def run_compare(config_path: str | Path) -> Path:
+def run_compare(config_path: str | Path, note: str | None = None) -> Path:
     """读取配置并执行统一评估对比。"""
     config = load_config(config_path)
     return run_compare_from_runs(
@@ -41,6 +42,7 @@ def run_compare(config_path: str | Path) -> Path:
         output_dir=config.get("output_dir", "outputs"),
         split=str(config.get("split", "test")),
         compare_config=config,
+        note=note,
     )
 
 
@@ -50,6 +52,7 @@ def run_compare_from_runs(
     output_dir: str | Path = "outputs",
     split: str = "test",
     compare_config: dict[str, Any] | None = None,
+    note: str | None = None,
 ) -> Path:
     """加载一个或多个训练产物，在同一 split 上统一评估并写出对比产物。"""
     runs = parse_runs({"runs": runs})
@@ -58,6 +61,7 @@ def run_compare_from_runs(
     figures_dir = out_dir / "figures"
     predictions_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
+    write_run_note(out_dir, note)
     save_config(compare_config or {"name": name, "output_dir": str(output_dir), "split": split, "runs": runs}, out_dir / "compare_config.yaml")
 
     rows = []
@@ -75,11 +79,12 @@ def run_compare_from_runs(
         loss_histories.append({"label": run["label"], "history": read_epoch_history(run_path)})
 
     write_metrics_csv(out_dir / "model_metrics.csv", rows)
-    for metric_name in metric_names_for_split(split):
-        write_metrics_bar_png(rows, figures_dir / f"metrics_{metric_name}.png", metric=metric_name)
     write_prediction_window_pngs(prediction_frames, figures_dir)
+    if prediction_frames:
+        import pandas as pd
+
+        write_prediction_window_metrics_csv(pd.concat(prediction_frames, ignore_index=True), figures_dir / "prediction_window_metrics.csv")
     write_comparison_loss_png(loss_histories, figures_dir / "loss_curves.png")
-    write_report(out_dir / "report.md", rows, split)
     return out_dir
 
 
@@ -153,13 +158,18 @@ def write_metrics_csv(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def format_summary_table(rows: list[dict[str, str]]) -> str:
-    """把对比结果格式化成适合终端和 txt 文件阅读的表格。"""
+    """把对比结果格式化成适合终端阅读的竖排摘要。"""
     fields = collect_fields(rows)
-    widths = {field: max(len(field), *(len(str(row.get(field, ""))) for row in rows)) for field in fields}
-    header_line = " | ".join(field.ljust(widths[field]) for field in fields)
-    separator = "-+-".join("-" * widths[field] for field in fields)
-    body = [" | ".join(str(row.get(field, "")).ljust(widths[field]) for field in fields) for row in rows]
-    return "\n".join(["PV Forecast Result Comparison", "", header_line, separator, *body, ""]) + "\n"
+    field_width = max(len(field) for field in fields)
+    lines = ["PV Forecast Result Comparison", ""]
+    for index, row in enumerate(rows, start=1):
+        label = row.get("label", f"run-{index}")
+        lines.append(f"Run {index}: {label}")
+        lines.append("-" * (len(lines[-1])))
+        for field in fields:
+            lines.append(f"{field.ljust(field_width)} : {row.get(field, '')}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
 
 
 def collect_fields(rows: list[dict[str, str]]) -> list[str]:
@@ -175,12 +185,6 @@ def collect_fields(rows: list[dict[str, str]]) -> list[str]:
             if key not in fields:
                 fields.append(key)
     return fields
-
-
-def write_report(path: Path, rows: list[dict[str, str]], split: str) -> None:
-    """写出 Markdown 简报。"""
-    lines = ["# PV Forecast Comparison", "", f"Split: `{split}`", "", format_summary_table(rows)]
-    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def print_compare_console_summary(summary_path: Path) -> None:

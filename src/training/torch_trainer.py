@@ -67,6 +67,9 @@ def train_torch_model(
     epoch_history: list[dict[str, float]] = []
     best_state_dict = None
     best_metric = float("inf")
+    patience = early_stopping_patience(training)
+    min_delta = early_stopping_min_delta(training)
+    stale_epochs = 0
     for epoch_index in range(int(training.get("epochs", 20))):
         batch_losses = []
         for history_batch, weather, direct, target in loader:
@@ -88,16 +91,42 @@ def train_torch_model(
                 val_metrics = evaluate_torch_model(model, validation_arrays, device=device, config=config)
                 model.train()
                 item["val_rmse"] = val_metrics["rmse"]
-                if val_metrics["rmse"] < best_metric:
+                if val_metrics["rmse"] < best_metric - min_delta:
                     best_metric = val_metrics["rmse"]
                     best_state_dict = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
+                    stale_epochs = 0
+                else:
+                    stale_epochs += 1
             epoch_history.append(item)
             if epoch_callback is not None:
                 epoch_callback(item)
+            if patience is not None and validation_arrays is not None and stale_epochs >= patience:
+                item["early_stop"] = 1.0
+                break
     if best_state_dict is not None:
         model.load_state_dict(best_state_dict)
         model.to(device)
     return epoch_history
+
+
+def early_stopping_patience(training: dict[str, Any]) -> int | None:
+    """Return patience when validation early stopping is enabled."""
+    config = training.get("early_stopping")
+    if not config:
+        return None
+    if isinstance(config, bool):
+        return int(training.get("patience", 10)) if config else None
+    if not isinstance(config, dict) or not config.get("enabled", False):
+        return None
+    patience = int(config.get("patience", 10))
+    return max(1, patience)
+
+
+def early_stopping_min_delta(training: dict[str, Any]) -> float:
+    config = training.get("early_stopping")
+    if isinstance(config, dict):
+        return float(config.get("min_delta", 0.0))
+    return float(training.get("min_delta", 0.0))
 
 
 def evaluate_torch_model(model, arrays, device=None, config: dict[str, Any] | None = None) -> dict[str, float]:

@@ -1,13 +1,12 @@
-name: bnn_optuna
-base_config: ../models/bnn/24h.yaml
+name: bnn_4h_optuna
+base_config: ../models/bnn/4h.yaml
 output_dir: outputs
-study_name: bnn_optuna
+study_name: bnn_4h_optuna
 direction: minimize
 metric: val_rmse
-n_trials: 20
+n_trials: 100
 
-# 默认 storage 是 outputs/tuning/<name>/study.db。
-# 中断后重复运行同一个配置，会继续补足到 n_trials 个完成 trial。
+# batch_size 固定为 BNN 默认配置中的 64；这里只搜索训练超参数。
 search_space:
   lr:
     type: log_float

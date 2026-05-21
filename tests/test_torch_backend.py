@@ -96,6 +96,55 @@ def test_torch_trainer_restores_best_validation_epoch():
     assert restored == min(val_rmses)
 
 
+def test_torch_trainer_stops_early_after_validation_patience():
+    import torch
+
+    class ConstantMeanModel(torch.nn.Module):
+        is_torch_model = True
+
+        def __init__(self):
+            super().__init__()
+            self.mean = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, batch):
+            batch_size = len(batch["direct"])
+            mean = self.mean.expand(batch_size, 1)
+            log_var = torch.zeros_like(mean)
+            return mean, log_var
+
+        def kl_loss(self):
+            return torch.zeros((), device=self.mean.device)
+
+    train_arrays = WindowArrays(
+        history=np.zeros((8, 1, 1), dtype=np.float32),
+        weather=np.zeros((8, 1, 1), dtype=np.float32),
+        direct=np.zeros((8, 1), dtype=np.float32),
+        target=np.full((8, 1), 10.0, dtype=np.float32),
+    )
+    val_arrays = WindowArrays(
+        history=np.zeros((8, 1, 1), dtype=np.float32),
+        weather=np.zeros((8, 1, 1), dtype=np.float32),
+        direct=np.zeros((8, 1), dtype=np.float32),
+        target=np.zeros((8, 1), dtype=np.float32),
+    )
+    config = {
+        "training": {
+            "device": "auto",
+            "epochs": 20,
+            "batch_size": 8,
+            "lr": 0.2,
+            "weight_decay": 0.0,
+            "early_stopping": {"enabled": True, "patience": 1, "min_delta": 0.0},
+        }
+    }
+    model = ConstantMeanModel()
+
+    history = train_torch_model(model, train_arrays, config, validation_arrays=val_arrays)
+
+    assert len(history) < 20
+    assert history[-1]["early_stop"] == 1.0
+
+
 def test_evaluate_torch_model_uses_mc_samples_for_stochastic_models():
     import torch
 

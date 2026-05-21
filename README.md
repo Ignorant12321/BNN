@@ -2,7 +2,7 @@
 
 本项目用于做光伏功率预测实验。当前流程分为三步：先把原始 CSV 预处理并按时间切分，再按单个 YAML 配置训练一个模型，最后加载已训练产物做统一评估和对比。
 
-训练阶段只使用 `train` 拟合模型，并输出 `train/val` 指标；`test` 指标只在 `compare` 阶段统一计算。这样可以避免在调参时反复使用测试集。Torch 后端会只用 train split 拟合标准化参数，在标准化空间训练模型，并在指标、预测 CSV 和图表中反变换回原始 `AC_POWER` 量纲。
+训练阶段只使用 `train` 拟合模型，并用 `val_rmse` 回滚最佳 epoch 和执行早停；训练结束后会额外在 `test` split 上输出最终指标、预测 CSV 和固定时段预测曲线。预测曲线会同时展示均值、90% 预测区间和 95% 预测区间。Torch 后端会只用 train split 拟合标准化参数，在标准化空间训练模型，并在指标、预测 CSV 和图表中反变换回原始 `AC_POWER` 量纲。
 
 ## 环境
 
@@ -147,6 +147,14 @@ target : 未来 horizon 步的 AC_POWER
 python -m src.experiments.train --config configs/models/bnn/24h.yaml
 ```
 
+可以给训练目录写入备注，内容会保存到本次时间戳目录下的 `note.txt`：
+
+```powershell
+python -m src.experiments.train --config configs/models/bnn/24h.yaml --note "BNN 24h baseline"
+```
+
+未传 `--note` 时，`note.txt` 默认写入时间戳目录名。
+
 训练不同 lookback 的 improved_bnn：
 
 ```powershell
@@ -171,15 +179,21 @@ python -m src.experiments.train --config configs/models/mc_dropout/24h.yaml
 outputs/train/<model_name>/<timestamp>/
   config.yaml
   manifest.json
+  note.txt
   train.log
   epoch_history.csv
   metrics.csv
+  predictions/test.csv
   figures/loss_curve.png
+  figures/prediction_0800_1200.png       # actual / mean / 90% interval / 95% interval
+  figures/prediction_1000_1400.png
+  figures/prediction_1200_1600.png
+  figures/prediction_window_metrics.csv
   models/best.pt             # torch 后端，按验证集 RMSE 回滚后的最佳 epoch
   models/best.pkl            # numpy 后端
 ```
 
-`metrics.csv` 只包含 `train` 和 `val` 指标。指标包括：
+`metrics.csv` 包含 `train`、`val` 和最终 `test` 指标。训练和早停只使用 `train/val`，`test` 只在模型选定后输出。指标包括：
 
 ```text
 mae, rmse, nmae, nrmse, picp_90, pinaw_90, picp_95, pinaw_95
@@ -244,10 +258,18 @@ training:
   lr: 0.0005
   weight_decay: 0.0001
   kl_beta: 0.000001  # improved_bnn 使用
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.0
 
 evaluation:
   n_samples: 30      # improved_bnn 和 mc_dropout 训练期验证/对比评估的预测采样次数
 ```
+
+早停只在有验证集时生效，监控 `val_rmse`。`patience: 10` 表示连续 10 个 epoch 没有超过 `min_delta` 的改善就提前结束，并回滚到验证集 RMSE 最低的权重。
+
+`epochs` 建议理解为训练上限，不建议先跑一次很大的 epoch 后把 early stopping 找到的轮数固定写死。调参阶段通常用较省时的上限，例如 `epochs: 100` 或 `150`，配合 `patience: 10` 或 `15`；最终正式训练可以放宽到 `epochs: 200` 或 `300`，配合 `patience: 15` 或 `20`。如果想诊断模型收敛速度，可以先用较大的上限跑一次训练，再查看 `epoch_history.csv` 中最佳 `val_rmse` 大概出现在哪一轮，但最终仍建议保留 early stopping。
 
 Torch 模型默认启用标准化；保存的 `config.yaml` 会包含本次 run 的 scaler，因此 `compare` 会先用同一 scaler 转换输入，再把预测均值、方差和 target 恢复到原始量纲后计算指标。若确实需要关闭，可在配置中写：
 
@@ -265,13 +287,35 @@ data:
 python -m src.experiments.tune --config configs/tune/bnn.yaml
 ```
 
+也可以给调参目录写入备注：
+
+```powershell
+python -m src.experiments.tune --config configs/tune/bnn.yaml --note "BNN hyperparameter search"
+```
+
 默认配置在 `configs/tune/bnn.yaml`，会基于 `configs/models/bnn/24h.yaml` 搜索超参数，并用验证集 `val_rmse` 作为目标指标。默认搜索：
 
 ```text
-lr, weight_decay, kl_beta, batch_size
+lr, weight_decay, kl_beta
 ```
 
-BNN 的网络结构当前按表 3 固定，因此 Optuna 只搜索训练超参数，不再搜索 `hidden_dim`、`branch_dim` 或 `conv_kernel`。
+BNN 的网络结构当前按表 3 固定，`batch_size` 统一固定为 64，因此 Optuna 只搜索训练超参数，不再搜索 `hidden_dim`、`branch_dim`、`conv_kernel` 或 `batch_size`。
+
+4h BNN 可以使用独立调参配置，输出到独立 study，避免和 24h 调参混在一起：
+
+```powershell
+python -m src.experiments.tune --config configs/tune/bnn_4h.yaml --note "BNN 4h hyperparameter search"
+```
+
+4h 调参完成后，最优参数会写在独立目录中：
+
+```text
+outputs/tuning/bnn_4h_optuna/
+  tuning_config.yaml
+  best_config.yaml
+  trials.csv
+  runs/trial-0000/
+```
 
 Optuna 只负责生成超参数组合；每个 trial 仍然调用项目现有训练流程。只要训练配置是 `training.backend: torch`，训练器就会使用 `torch.optim.AdamW`，因此 BNN 调参时实际是：
 
@@ -279,10 +323,11 @@ Optuna 只负责生成超参数组合；每个 trial 仍然调用项目现有训
 Optuna 选参数 -> AdamW 训练 -> 读取 val_rmse -> Optuna 更新搜索
 ```
 
-调参输出是稳定目录，不带时间戳：
+默认 BNN 调参输出是稳定目录，不带时间戳：
 
 ```text
 outputs/tuning/bnn_optuna/
+  note.txt
   tuning_config.yaml
   study.db
   trials.csv
@@ -292,14 +337,28 @@ outputs/tuning/bnn_optuna/
   runs/trial-0001/
 ```
 
-`study.db` 是 Optuna 的 SQLite storage，用于断点继续。`n_trials` 表示目标完成 trial 总数：如果中断后只完成了 7/20，再运行同一个命令会继续补到 20；如果已经完成 20/20，再运行不会重复训练。需要继续扩展搜索时，把 `configs/tune/bnn.yaml` 里的 `n_trials` 改大即可。
+`study.db` 是 Optuna 的 SQLite storage，用于断点继续。`n_trials` 表示目标完成 trial 总数：如果中断后只完成了 7/20，再运行同一个命令会继续补到 20；如果已经完成 20/20，再运行不会重复训练。需要继续扩展搜索时，把对应 tune YAML 里的 `n_trials` 改大即可，例如把 `configs/tune/bnn_4h.yaml` 从 `50` 改成 `80` 后会继续从 50 补到 80。
+
+一般同一个模型和 lookback 只需要完成一组 study。想从 0 开始重新跑同一个调参配置，可以删除对应调参目录，例如：
+
+```powershell
+Remove-Item -Recurse -Force outputs\tuning\bnn_4h_optuna
+```
+
+然后重新运行 `python -m src.experiments.tune --config configs/tune/bnn_4h.yaml`。如果想保留旧结果并新开一组实验，更推荐改 tune YAML 里的 `name` 和 `study_name`，例如 `bnn_4h_optuna_v2`，这样会输出到新的稳定目录。删除 tuning 目录只会删除 Optuna study 和 trial 产物，不会撤销已经写入 `configs/models/bnn/4h.yaml` 的参数；如果要完全从公共默认配置重新搜索，需要先移除 4h 配置中已应用的 `training.lr`、`training.weight_decay` 和 `training.kl_beta` 覆盖。
 
 调参 trial 的训练产物不会写到顶层 `outputs/train/`，而是写入当前 tuning 目录下的 `runs/trial-xxxx/`。
 
-应用最优参数前可以先预览变化：
+应用最优参数前可以先预览变化。默认/24h 调参通常写回 BNN 公共配置：
 
 ```powershell
 python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_optuna --target configs/models/bnn/bnn.yaml
+```
+
+4h 独立调参建议只写回 4h 配置，避免影响其他 lookback：
+
+```powershell
+python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_4h_optuna --target configs/models/bnn/4h.yaml
 ```
 
 命令会展示类似：
@@ -309,14 +368,15 @@ Tuned Parameter Changes
 ------------------------------------------------
 training.lr      | 0.0005 -> 0.0009291350888559107
 training.kl_beta | 1e-06 -> 4.182709268632557e-05
-training.batch_size | 64 -> 128
 ```
 
 然后提示是否应用。确认后才会写回目标 YAML。若确认无误，也可以跳过提示：
 
 ```powershell
-python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_optuna --target configs/models/bnn/bnn.yaml --yes
+python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_4h_optuna --target configs/models/bnn/4h.yaml --yes
 ```
+
+注意：`configs/models/bnn/1h.yaml`、`4h.yaml`、`8h.yaml`、`12h.yaml` 和 `24h.yaml` 都会 include 公共 `bnn.yaml`。如果把 4h 搜到的参数写入 `bnn.yaml`，其他 lookback 后续训练也会继承这组 4h 参数；只想更新 4h 时应写入 `configs/models/bnn/4h.yaml`。
 
 ## 对比评估
 
@@ -335,6 +395,12 @@ python -m src.experiments.compare --config configs/compare/lookback.yaml
 python -m src.experiments.compare --run BNN-24h=outputs/train/improved_bnn/20260521-105753
 python -m src.experiments.compare --name lookback --run outputs/train/improved_bnn
 python -m src.experiments.compare --name main --run BNN-24h=outputs/train/improved_bnn/20260521-105753 --run outputs/train/mlp_baseline
+```
+
+对比输出也支持备注：
+
+```powershell
+python -m src.experiments.compare --config configs/compare/main.yaml --note "24h main comparison"
 ```
 
 当路径指向单个训练目录，例如 `outputs/train/improved_bnn/20260521-105753`，只评估这一份训练产物。写成 `label=path` 时会使用 `label` 作为显示名。
@@ -359,15 +425,31 @@ runs:
 ```text
 outputs/comparisons/<timestamp>/
   compare_config.yaml
+  note.txt
   model_metrics.csv
   predictions/<label>.csv
-  figures/metrics_<metric>.png
   figures/loss_curves.png
   figures/prediction_0800_1200.png
   figures/prediction_1000_1400.png
   figures/prediction_1200_1600.png
-  report.md
 ```
+
+## 本地可视化对比
+
+启动本地 visualizer：
+
+```powershell
+python visualizer/server.py
+```
+
+浏览器打开终端输出的地址，默认是 `http://127.0.0.1:5177/`。页面默认为空，只加载可选文件夹列表，不会自动把所有结果铺到表格里。
+
+- 读取：选择 `outputs/comparisons/<timestamp>`，读取其中的 `model_metrics.csv`、`predictions/`、配置和关键图像进行展示。
+- 创建：勾选多个 `outputs/train/<model>/<timestamp>`，点击“创建并读取”，固定用 `test` split 生成新的 `outputs/comparisons/<timestamp>` 后再展示。
+- 导航：筛选和显示当前已读取 comparison 中的 run。
+- 对比图像只保留关键图：`loss_curves.png` 和 `prediction_*.png`。
+- 清空页面：只清空当前浏览器展示，不删除文件。
+- 退出当前文件夹：退出当前已读取的 comparison，让页面回到空表状态，不删除任何文件。
 
 旧入口 `src.experiments.compare_results` 已删除，请使用 `src.experiments.compare`。
 
@@ -389,7 +471,7 @@ include 文件先加载，当前 YAML 中的同名字段会覆盖 include 中的
 
 1. 先运行预处理和切分。
 2. 先用 `configs/tune/bnn.yaml` 在 24h BNN 上搜索一组候选超参数。
-3. 用 `outputs/tuning/bnn_optuna/best_config.yaml` 重训或作为参考更新 BNN 默认配置。
+3. 用 `outputs/tuning/bnn_optuna/best_config.yaml` 重训或作为参考更新 BNN 默认配置；如果调的是 4h，则用 `outputs/tuning/bnn_4h_optuna/best_config.yaml` 更新 `configs/models/bnn/4h.yaml`。
 4. 固定候选超参数后，训练 `improved_bnn` 和三个 baseline。
 5. 用 `configs/compare/main.yaml` 做 24h 主模型和 baseline 对比。
 6. 分别训练 `1h/4h/8h/12h/24h` 的 `improved_bnn`。
