@@ -1,114 +1,46 @@
-import csv
 from pathlib import Path
 
-import yaml
+import numpy as np
+import pandas as pd
 
-from src.experiments.compare_results import run_compare_results, run_compare_results_from_runs
+from src.experiments.compare import expand_run_entries, run_compare_from_runs
 from src.experiments.train import run_training
 
 
-def _write_metrics(run_dir: Path, rmse: float, nll: float) -> None:
-    metrics_dir = run_dir / "metrics"
-    metrics_dir.mkdir(parents=True)
-    with (metrics_dir / "metrics.csv").open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=["metric", "value"])
-        writer.writeheader()
-        writer.writerow({"metric": "rmse", "value": rmse})
-        writer.writerow({"metric": "nll", "value": nll})
+METRIC_NAMES = [
+    "test_mae",
+    "test_rmse",
+    "test_nmae",
+    "test_nrmse",
+    "test_picp_90",
+    "test_pinaw_90",
+    "test_picp_95",
+    "test_pinaw_95",
+]
 
 
-def test_compare_results_reads_existing_runs_without_training(tmp_path: Path):
-    run_a = tmp_path / "outputs" / "improved_bnn" / "run-a"
-    run_b = tmp_path / "outputs" / "cnn_baseline" / "run-b"
-    _write_metrics(run_a, rmse=1.5, nll=2.5)
-    _write_metrics(run_b, rmse=3.5, nll=4.5)
-    config_path = tmp_path / "compare.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "name": "main",
-                "output_dir": str(tmp_path / "outputs"),
-                "runs": [
-                    {"label": "BNN", "path": str(run_a)},
-                    {"label": "CNN", "path": str(run_b)},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    out_dir = run_compare_results(config_path)
-
-    summary = (out_dir / "model_metrics.txt").read_text(encoding="utf-8")
-    assert "BNN" in summary
-    assert "CNN" in summary
-    assert "1.5" in summary
-    assert "4.5" in summary
-
-
-def test_compare_results_accepts_single_cli_run_and_writes_txt(tmp_path: Path):
-    run_a = tmp_path / "outputs" / "improved_bnn" / "run-a"
-    _write_metrics(run_a, rmse=1.5, nll=2.5)
-
-    out_dir = run_compare_results_from_runs(
-        [{"label": "BNN-24h", "path": str(run_a)}],
-        name="single",
-        output_dir=tmp_path / "outputs",
-    )
-
-    summary_path = out_dir / "model_metrics.txt"
-    assert summary_path.is_file()
-    summary = summary_path.read_text(encoding="utf-8")
-    assert "BNN-24h" in summary
-    assert "improved_bnn" in summary
-    assert "1.5" in summary
-    assert "model_metrics.csv" not in summary
-
-
-def test_compare_results_resolves_model_root_to_latest_timestamp_run(tmp_path: Path):
-    model_root = tmp_path / "outputs" / "improved_bnn"
-    old_run = model_root / "20260520-120000"
-    latest_run = model_root / "20260520-130000"
-    _write_metrics(old_run, rmse=9.5, nll=8.5)
-    _write_metrics(latest_run, rmse=1.5, nll=2.5)
-
-    out_dir = run_compare_results_from_runs(
-        [{"label": "BNN-24h", "path": str(model_root)}],
-        name="single",
-        output_dir=tmp_path / "outputs",
-    )
-
-    summary = (out_dir / "model_metrics.txt").read_text(encoding="utf-8")
-    assert str(latest_run) in summary
-    assert "1.5" in summary
-    assert "9.5" not in summary
-
-
-def test_compare_loads_trained_run_and_evaluates_test_split(tmp_path: Path):
-    processed_dir = tmp_path / "processed"
+def _write_processed_splits(processed_dir: Path) -> None:
     processed_dir.mkdir()
-    for split_name, values in {
-        "train": [1.0, 2.0, 3.0, 4.0],
-        "val": [10.0, 11.0, 12.0, 13.0],
-        "test": [20.0, 21.0, 22.0, 23.0],
-    }.items():
-        frame = {
-            "DATE_TIME": [f"2020-01-01 00:{minute:02d}:00" for minute in range(0, 60, 15)],
-            "AC_POWER": values,
-            "AMBIENT_TEMPERATURE": [25.0] * 4,
-            "MODULE_TEMPERATURE": [30.0] * 4,
-            "IRRADIATION": [0.5] * 4,
-        }
-        import pandas as pd
+    times = pd.date_range("2020-01-01 07:00:00", periods=40, freq="15min")
+    base = {
+        "DATE_TIME": times,
+        "AC_POWER": np.linspace(1.0, 40.0, len(times), dtype=np.float32),
+        "AMBIENT_TEMPERATURE": np.linspace(20.0, 30.0, len(times), dtype=np.float32),
+        "MODULE_TEMPERATURE": np.linspace(25.0, 35.0, len(times), dtype=np.float32),
+        "IRRADIATION": np.linspace(0.1, 0.9, len(times), dtype=np.float32),
+    }
+    for split_name in ("train", "val", "test"):
+        pd.DataFrame(base).to_csv(processed_dir / f"{split_name}.csv", index=False)
 
-        pd.DataFrame(frame).to_csv(processed_dir / f"{split_name}.csv", index=False)
-    config = {
+
+def _training_config(tmp_path: Path, processed_dir: Path) -> dict:
+    return {
         "output_dir": str(tmp_path / "outputs"),
         "data": {
             "generation_path": str(tmp_path / "missing_generation.csv"),
             "weather_path": str(tmp_path / "missing_weather.csv"),
             "processed_dir": str(processed_dir),
-            "lookback": 2,
+            "lookback": 1,
             "horizon": 1,
             "features": {
                 "history": ["AC_POWER"],
@@ -118,72 +50,65 @@ def test_compare_loads_trained_run_and_evaluates_test_split(tmp_path: Path):
             },
         },
         "model": {"name": "mlp_baseline"},
-        "training": {"backend": "numpy"},
+        "training": {"backend": "numpy", "device": "auto"},
     }
-    run_dir = run_training(config)
 
-    out_dir = run_compare_results_from_runs(
+
+def test_compare_outputs_research_artifacts_without_duplicate_txt(tmp_path: Path):
+    processed_dir = tmp_path / "processed"
+    _write_processed_splits(processed_dir)
+    run_dir = run_training(_training_config(tmp_path, processed_dir))
+
+    out_dir = run_compare_from_runs(
         [{"label": "MLP", "path": str(run_dir)}],
-        name="main",
+        name="comparison",
         output_dir=tmp_path / "outputs",
     )
 
-    assert out_dir.parent.parent.name == "comparisons"
+    assert out_dir.parent == tmp_path / "outputs" / "comparisons"
     assert (out_dir / "compare_config.yaml").is_file()
     assert (out_dir / "model_metrics.csv").is_file()
-    assert (out_dir / "model_metrics.txt").is_file()
+    assert not (out_dir / "model_metrics.txt").exists()
     assert (out_dir / "predictions" / "MLP.csv").is_file()
-    assert (out_dir / "figures" / "metrics_bar.svg").is_file()
     assert (out_dir / "report.md").is_file()
-    summary = (out_dir / "model_metrics.txt").read_text(encoding="utf-8")
-    assert "test_rmse" in summary
+
+    metrics_text = (out_dir / "model_metrics.csv").read_text(encoding="utf-8")
+    for metric_name in METRIC_NAMES:
+        assert metric_name in metrics_text
+        figure_path = out_dir / "figures" / f"metrics_{metric_name}.png"
+        assert figure_path.is_file()
+        assert figure_path.read_bytes().startswith(b"\x89PNG")
+    assert "nll" not in metrics_text
+
+    predictions_text = (out_dir / "predictions" / "MLP.csv").read_text(encoding="utf-8")
+    assert "target_time" in predictions_text
+    assert (out_dir / "figures" / "loss_curves.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_0800_1200.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_1000_1400.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_1200_1600.png").read_bytes().startswith(b"\x89PNG")
 
 
-def test_compare_evaluates_trained_torch_run(tmp_path: Path):
-    processed_dir = tmp_path / "processed"
-    processed_dir.mkdir()
-    import pandas as pd
+def test_expand_run_entries_expands_model_root_to_child_run_dirs(tmp_path: Path):
+    model_root = tmp_path / "outputs" / "train" / "improved_bnn"
+    for run_name in ("20260521-110241", "renamed-4h"):
+        run_dir = model_root / run_name
+        run_dir.mkdir(parents=True)
+        (run_dir / "metrics.csv").write_text("split,metric,value\nval,rmse,1.0\n", encoding="utf-8")
+    (model_root / "notes").mkdir()
 
-    for split_name, values in {
-        "train": [1.0, 2.0, 3.0, 4.0],
-        "val": [10.0, 11.0, 12.0, 13.0],
-        "test": [20.0, 21.0, 22.0, 23.0],
-    }.items():
-        pd.DataFrame(
-            {
-                "DATE_TIME": [f"2020-01-01 00:{minute:02d}:00" for minute in range(0, 60, 15)],
-                "AC_POWER": values,
-                "AMBIENT_TEMPERATURE": [25.0] * 4,
-                "MODULE_TEMPERATURE": [30.0] * 4,
-                "IRRADIATION": [0.5] * 4,
-            }
-        ).to_csv(processed_dir / f"{split_name}.csv", index=False)
-    config = {
-        "output_dir": str(tmp_path / "outputs"),
-        "data": {
-            "generation_path": str(tmp_path / "missing_generation.csv"),
-            "weather_path": str(tmp_path / "missing_weather.csv"),
-            "processed_dir": str(processed_dir),
-            "lookback": 2,
-            "horizon": 1,
-            "features": {
-                "history": ["AC_POWER"],
-                "weather": ["AMBIENT_TEMPERATURE", "MODULE_TEMPERATURE", "IRRADIATION"],
-                "direct": ["AC_POWER"],
-                "target": "AC_POWER",
-            },
-        },
-        "model": {"name": "mlp_baseline", "hidden_dim": 8, "branch_dim": 4},
-        "training": {"backend": "torch", "device": "auto", "epochs": 1, "batch_size": 2, "lr": 0.01},
-    }
-    run_dir = run_training(config)
+    runs = expand_run_entries([{"path": str(model_root)}])
 
-    out_dir = run_compare_results_from_runs(
-        [{"label": "Torch-MLP", "path": str(run_dir)}],
-        name="torch",
-        output_dir=tmp_path / "outputs",
-    )
+    assert runs == [
+        {"label": "20260521-110241", "path": str(model_root / "20260521-110241")},
+        {"label": "renamed-4h", "path": str(model_root / "renamed-4h")},
+    ]
 
-    assert (out_dir / "predictions" / "Torch-MLP.csv").is_file()
-    summary = (out_dir / "model_metrics.txt").read_text(encoding="utf-8")
-    assert "test_rmse" in summary
+
+def test_expand_run_entries_keeps_explicit_single_run_label(tmp_path: Path):
+    run_dir = tmp_path / "outputs" / "train" / "improved_bnn" / "renamed-24h"
+    run_dir.mkdir(parents=True)
+    (run_dir / "config.yaml").write_text("model:\n  name: improved_bnn\n", encoding="utf-8")
+
+    runs = expand_run_entries([{"label": "BNN-24h", "path": str(run_dir)}])
+
+    assert runs == [{"label": "BNN-24h", "path": str(run_dir)}]

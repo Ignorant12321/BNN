@@ -1,4 +1,4 @@
-"""训练 run 元数据。"""
+"""训练产物元数据。"""
 
 from __future__ import annotations
 
@@ -36,4 +36,3 @@ def build_manifest(
         },
         "training": config.get("training", {}),
     }
-

@@ -5,10 +5,10 @@
 
 使用：
     单模型训练：
-    python -m src.experiments.train --config configs/models/bnn_24h.yaml
+    python -m src.experiments.train --config configs/models/bnn/24h.yaml
 
     多模型对比：
-    python -m src.experiments.compare_results --config configs/compare/main.yaml
+    python -m src.experiments.compare --config configs/compare/main.yaml
 """
 
 from __future__ import annotations
@@ -32,46 +32,73 @@ def _torch_backend(config: dict[str, Any]) -> bool:
     return str(config.get("training", {}).get("backend", "numpy")).lower() == "torch"
 
 
-def _torch_model(config: dict[str, Any], feature_mode: str, dropout: float = 0.0):
-    from src.models.torch_models import TorchPVNet
-
+def _model_dimensions(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], int, int, int]:
     data = config["data"]
     model_config = config.get("model", {})
     history_features, weather_features, direct_features = feature_dimensions_from_config(config)
-    return TorchPVNet(
-        lookback=int(data["lookback"]),
-        horizon=int(data["horizon"]),
-        history_features=history_features,
-        weather_features=weather_features,
-        direct_features=direct_features,
-        hidden_dim=int(model_config.get("hidden_dim", 128)),
-        branch_dim=int(model_config.get("branch_dim", 64)),
-        feature_mode=feature_mode,
-        dropout=dropout,
-    )
+    return data, model_config, history_features, weather_features, direct_features
 
 
 def _build_improved_bnn(config: dict[str, Any]) -> ImprovedBayesianPVNet:
     if _torch_backend(config):
-        return _torch_model(config, feature_mode="all")
+        from src.models.torch_models import ImprovedBayesianTorchNet
+
+        data, model_config, history_features, weather_features, direct_features = _model_dimensions(config)
+        return ImprovedBayesianTorchNet(
+            lookback=int(data["lookback"]),
+            horizon=int(data["horizon"]),
+            history_features=history_features,
+            weather_features=weather_features,
+            direct_features=direct_features,
+        )
     return ImprovedBayesianPVNet(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
 
 def _build_mlp_baseline(config: dict[str, Any]) -> FlattenedMLPBaseline:
     if _torch_backend(config):
-        return _torch_model(config, feature_mode="all")
+        from src.models.torch_models import MLPBaselineTorchNet
+
+        data, model_config, history_features, weather_features, direct_features = _model_dimensions(config)
+        return MLPBaselineTorchNet(
+            lookback=int(data["lookback"]),
+            horizon=int(data["horizon"]),
+            history_features=history_features,
+            weather_features=weather_features,
+            direct_features=direct_features,
+            hidden_dim=int(model_config.get("hidden_dim", 128)),
+        )
     return FlattenedMLPBaseline(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
 
 def _build_cnn_baseline(config: dict[str, Any]) -> HistoryCNNBaseline:
     if _torch_backend(config):
-        return _torch_model(config, feature_mode="history")
+        from src.models.torch_models import CNNBaselineTorchNet
+
+        data, model_config, history_features, _weather_features, _direct_features = _model_dimensions(config)
+        return CNNBaselineTorchNet(
+            horizon=int(data["horizon"]),
+            history_features=history_features,
+            hidden_dim=int(model_config.get("hidden_dim", 128)),
+            branch_dim=int(model_config.get("branch_dim", 64)),
+            conv_kernel=int(model_config.get("conv_kernel", 5)),
+        )
     return HistoryCNNBaseline(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
 
 def _build_mc_dropout(config: dict[str, Any]) -> MCDropoutBaseline:
     if _torch_backend(config):
-        return _torch_model(config, feature_mode="history_weather", dropout=float(config.get("model", {}).get("dropout", 0.2)))
+        from src.models.torch_models import MCDropoutTorchNet
+
+        data, model_config, history_features, weather_features, _direct_features = _model_dimensions(config)
+        return MCDropoutTorchNet(
+            lookback=int(data["lookback"]),
+            horizon=int(data["horizon"]),
+            history_features=history_features,
+            weather_features=weather_features,
+            hidden_dim=int(model_config.get("hidden_dim", 128)),
+            branch_dim=int(model_config.get("branch_dim", 64)),
+            dropout=float(model_config.get("dropout", 0.2)),
+        )
     return MCDropoutBaseline(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
 

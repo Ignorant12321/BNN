@@ -132,14 +132,25 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     run_dir = run_training(config)
 
     np.testing.assert_array_equal(model.fitted_target, np.array([[3.0]], dtype=np.float32))
-    assert run_dir.parent.parent.name == "runs"
+    assert run_dir.parent.parent.name == "train"
     assert (run_dir / "config.yaml").is_file()
     assert (run_dir / "manifest.json").is_file()
-    train_history = (run_dir / "metrics" / "train_history.csv").read_text(encoding="utf-8")
-    assert "train_rmse" in train_history
-    assert "val_rmse" in train_history
-    assert "test_rmse" not in train_history
-    assert (run_dir / "logs" / "train.log").is_file()
+    epoch_history = (run_dir / "epoch_history.csv").read_text(encoding="utf-8")
+    split_metrics = (run_dir / "metrics.csv").read_text(encoding="utf-8")
+    assert "epoch,loss" in epoch_history
+    assert "train,rmse" in split_metrics
+    assert "train,mae" in split_metrics
+    assert "val,rmse" in split_metrics
+    assert "val,picp_90" in split_metrics
+    assert "test,rmse" not in split_metrics
+    assert "nll" not in split_metrics
+    loss_curve_path = run_dir / "figures" / "loss_curve.png"
+    assert loss_curve_path.is_file()
+    assert loss_curve_path.read_bytes().startswith(b"\x89PNG")
+    assert (run_dir / "train.log").is_file()
+    assert not (run_dir / "logs").exists()
+    assert not (run_dir / "metrics").exists()
+    assert not (run_dir / "split_metrics.csv").exists()
     assert (run_dir / "models" / "best.pkl").is_file()
     output = capsys.readouterr().out
     assert output.index("Training Parameters") < output.index("Training Process") < output.index("Training Results")
@@ -147,4 +158,10 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert "Fit" in output
     assert "Duration" in output
     assert "Val RMSE" in output
+    assert "Val NLL" not in output
     assert str(run_dir) in output
+    log_text = (run_dir / "train.log").read_text(encoding="utf-8")
+    assert "Training Parameters" in log_text
+    assert "Training Process" in log_text
+    assert "Training Results" in log_text
+    assert "Val RMSE" in log_text

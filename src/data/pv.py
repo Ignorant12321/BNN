@@ -37,6 +37,7 @@ class WindowArrays:
     weather: np.ndarray
     direct: np.ndarray
     target: np.ndarray
+    target_time: np.ndarray | None = None
 
     def as_batch(self, limit: int | None = None) -> dict[str, np.ndarray]:
         """把窗口数组转换成模型前向传播需要的 batch 字典。"""
@@ -103,11 +104,15 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
     weather_values = frame[columns.weather].to_numpy(dtype=np.float32)
     direct_values = frame[columns.direct].to_numpy(dtype=np.float32)
     target_values = frame[columns.target].to_numpy(dtype=np.float32)
+    time_values = None
+    if "DATE_TIME" in frame.columns:
+        time_values = pd.to_datetime(frame["DATE_TIME"]).dt.strftime("%Y-%m-%d %H:%M:%S").to_numpy()
 
     history_windows = []
     weather_windows = []
     direct_rows = []
     target_windows = []
+    target_time_windows = []
     for start in range(0, len(frame) - lookback - horizon + 1):
         split = start + lookback
         end = split + horizon
@@ -115,6 +120,8 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
         weather_windows.append(weather_values[split:end])
         direct_rows.append(direct_values[split - 1])
         target_windows.append(target_values[split:end])
+        if time_values is not None:
+            target_time_windows.append(time_values[split:end])
 
     if not target_windows:
         raise ValueError("not enough rows to build one forecasting window")
@@ -123,6 +130,7 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
         weather=np.stack(weather_windows).astype(np.float32),
         direct=np.stack(direct_rows).astype(np.float32),
         target=np.stack(target_windows).astype(np.float32),
+        target_time=np.stack(target_time_windows) if target_time_windows else None,
     )
 
 

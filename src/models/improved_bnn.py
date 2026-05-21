@@ -2,10 +2,10 @@
 
 功能：
     提供 NumPy ridge 版本的三路输入融合概率模型。若配置使用 PyTorch
-    后端，同名模型会由 `src.models.torch_models.TorchPVNet` 构造。
+    后端，同名模型会由 `src.models.torch_models.ImprovedBayesianTorchNet` 构造。
 
 使用：
-    python -m src.experiments.train --config configs/models/bnn_24h.yaml
+    python -m src.experiments.train --config configs/models/bnn/24h.yaml
 """
 
 from __future__ import annotations

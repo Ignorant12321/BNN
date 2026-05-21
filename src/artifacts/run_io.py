@@ -15,19 +15,23 @@ from src.torch_runtime import import_torch
 
 
 def create_run_dir(config: dict[str, Any]) -> Path:
-    """创建 outputs/runs/<model>/<timestamp>。"""
+    """创建训练产物目录；默认 outputs/train/<model>/<timestamp>。"""
+    explicit_run_dir = config.get("run_dir")
+    if explicit_run_dir:
+        run_dir = Path(str(explicit_run_dir))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
     model_name = str(config.get("model", {}).get("name", "model"))
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = Path(config.get("output_dir", "outputs")) / "runs" / model_name / timestamp
+    run_dir = Path(config.get("output_dir", "outputs")) / "train" / model_name / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
 
 def create_comparison_dir(name: str, output_dir: str | Path = "outputs") -> Path:
-    """创建 outputs/comparisons/<name>/<timestamp>。"""
+    """创建 outputs/comparisons/<timestamp>。"""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    safe_name = str(name).strip() or "comparison"
-    compare_dir = Path(output_dir) / "comparisons" / safe_name / timestamp
+    compare_dir = Path(output_dir) / "comparisons" / timestamp
     compare_dir.mkdir(parents=True, exist_ok=True)
     return compare_dir
 
@@ -39,12 +43,12 @@ def save_config(config: dict[str, Any], path: Path) -> None:
 
 
 def load_run_config(run_dir: str | Path) -> dict[str, Any]:
-    """读取 run 中保存的配置快照。"""
+    """读取训练目录中保存的配置快照。"""
     config_path = Path(run_dir) / "config.yaml"
     with config_path.open("r", encoding="utf-8") as file:
         payload = yaml.safe_load(file)
     if not isinstance(payload, dict):
-        raise ValueError(f"run config must be a mapping: {config_path}")
+        raise ValueError(f"training config must be a mapping: {config_path}")
     return payload
 
 
@@ -89,7 +93,7 @@ def save_model_artifact(model, config: dict[str, Any], models_dir: Path, stem: s
 
 
 def load_model_artifact(run_dir: str | Path):
-    """从 run 目录加载 best 模型。"""
+    """从训练目录加载 best 模型。"""
     run_path = Path(run_dir)
     config = load_run_config(run_path)
     torch_path = run_path / "models" / "best.pt"
@@ -113,7 +117,7 @@ def load_model_artifact(run_dir: str | Path):
 
 
 def resolve_run_path(path: str | Path) -> Path:
-    """解析 run 路径；传入模型根目录时选择最新 run。"""
+    """解析训练产物路径；传入模型根目录时选择最新时间戳目录。"""
     run_path = Path(path)
     if is_run_dir(run_path):
         return run_path
@@ -126,10 +130,9 @@ def resolve_run_path(path: str | Path) -> Path:
 
 
 def is_run_dir(path: Path) -> bool:
-    """判断路径是否像一个 run 目录。"""
+    """判断路径是否像一个训练目录。"""
     return (
         (path / "config.yaml").is_file()
-        or (path / "metrics" / "metrics.csv").is_file()
-        or (path / "metrics" / "train_history.csv").is_file()
+        or (path / "metrics.csv").is_file()
+        or (path / "epoch_history.csv").is_file()
     )
-

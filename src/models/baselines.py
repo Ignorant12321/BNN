@@ -6,7 +6,7 @@
 
 使用：
     通过模型注册表构造：
-    python -m src.experiments.train --config configs/models/bnn_24h.yaml
+    python -m src.experiments.train --config configs/models/bnn/24h.yaml
 """
 
 from __future__ import annotations

@@ -1,13 +1,14 @@
 name: main
 output_dir: outputs
 
-# 先分别训练模型，再把对应 run 目录填到这里。
+# path 指向模型根目录时，会自动展开其下所有训练 run。
+# 如果只想对比某一次训练，请填具体 run 目录并写 label。
 runs:
   - label: BNN-24h
-    path: outputs/runs/improved_bnn
+    path: outputs/train/improved_bnn/20260521-105753
   - label: MLP-24h
-    path: outputs/runs/mlp_baseline
+    path: outputs/train/mlp_baseline
   - label: CNN-24h
-    path: outputs/runs/cnn_baseline
+    path: outputs/train/cnn_baseline
   - label: MC-Dropout-24h
-    path: outputs/runs/mc_dropout
+    path: outputs/train/mc_dropout

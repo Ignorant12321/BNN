@@ -3,3 +3,5 @@ pandas
 PyYAML
 pytest
 torch
+matplotlib
+optuna

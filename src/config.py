@@ -5,7 +5,7 @@
 
     使用：
     该文件通常被其他命令导入，例如：
-    python -m src.experiments.train --config configs/models/bnn_24h.yaml
+    python -m src.experiments.train --config configs/models/bnn/24h.yaml
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def apply_config_defaults(config: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("output_dir", "outputs")
     training = result.setdefault("training", {})
     training.setdefault("backend", "torch")
-    training.setdefault("device", "cuda")
+    training.setdefault("device", "auto")
     training.setdefault("epochs", 5)
     training.setdefault("batch_size", 32)
     training.setdefault("lr", 0.001)

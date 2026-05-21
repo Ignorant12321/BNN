@@ -1,0 +1,19 @@
+include:
+  - ../../data.yaml
+
+model:
+  name: mc_dropout
+  hidden_dim: 128
+  branch_dim: 64
+  dropout: 0.2
+
+training:
+  backend: torch
+  device: auto
+  epochs: 50
+  batch_size: 64
+  lr: 0.0005
+  weight_decay: 0.0001
+
+evaluation:
+  n_samples: 30

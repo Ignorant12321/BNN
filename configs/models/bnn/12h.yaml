@@ -1,0 +1,5 @@
+include:
+  - bnn.yaml
+
+data:
+  lookback: 48

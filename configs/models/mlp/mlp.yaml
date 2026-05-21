@@ -1,0 +1,14 @@
+include:
+  - ../../data.yaml
+
+model:
+  name: mlp_baseline
+  hidden_dim: 128
+
+training:
+  backend: torch
+  device: auto
+  epochs: 50
+  batch_size: 64
+  lr: 0.0005
+  weight_decay: 0.0001

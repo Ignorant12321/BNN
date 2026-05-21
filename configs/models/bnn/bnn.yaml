@@ -1,0 +1,17 @@
+include:
+  - ../../data.yaml
+
+model:
+  name: improved_bnn
+
+training:
+  backend: torch
+  device: auto
+  epochs: 50
+  batch_size: 64
+  lr: 0.0005
+  weight_decay: 0.0001
+  kl_beta: 0.000001
+
+evaluation:
+  n_samples: 30
