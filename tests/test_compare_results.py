@@ -17,6 +17,7 @@ METRIC_NAMES = [
     "test_picp_95",
     "test_pinaw_95",
 ]
+GENERATION_METRIC_NAMES = [name.replace("test_", "test_generation_", 1) for name in METRIC_NAMES]
 
 
 def _write_processed_splits(processed_dir: Path) -> None:
@@ -74,7 +75,7 @@ def test_compare_outputs_research_artifacts_without_duplicate_txt(tmp_path: Path
     assert not (out_dir / "report.md").exists()
 
     metrics_text = (out_dir / "model_metrics.csv").read_text(encoding="utf-8")
-    for metric_name in METRIC_NAMES:
+    for metric_name in [*METRIC_NAMES, *GENERATION_METRIC_NAMES]:
         assert metric_name in metrics_text
         assert not (out_dir / "figures" / f"metrics_{metric_name}.png").exists()
     assert "nll" not in metrics_text

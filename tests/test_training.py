@@ -144,6 +144,8 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert "val,picp_90" in split_metrics
     assert "test,rmse" in split_metrics
     assert "test,picp_90" in split_metrics
+    assert "test_generation,rmse" in split_metrics
+    assert "test_generation,picp_90" in split_metrics
     assert "nll" not in split_metrics
     loss_curve_path = run_dir / "figures" / "loss_curve.png"
     assert loss_curve_path.is_file()

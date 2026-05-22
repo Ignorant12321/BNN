@@ -26,7 +26,7 @@ from src.artifacts.run_io import create_run_dir, save_config, save_manifest, sav
 from src.config import load_config
 from src.data.pv import load_split_window_arrays_from_config
 from src.data.scaling import attach_fitted_scaler, fit_window_scaler, should_scale_torch_training, transform_window_arrays_by_split
-from src.evaluation.metrics import evaluate_arrays
+from src.evaluation.metrics import BASE_METRIC_NAMES, evaluate_arrays, generation_period_metrics
 from src.evaluation.plots import write_prediction_window_metrics_csv, write_prediction_window_pngs, write_training_loss_png
 from src.evaluation.predictor import predict_dataframe
 from src.models.registry import build_model
@@ -68,9 +68,10 @@ def run_training(config: dict[str, Any], note: str | None = None) -> Path:
     fit_started_timer = time.perf_counter()
     print_training_process_start(fit_started_at)
     train_result = train_model(model, arrays_by_split, config, epoch_callback=print_epoch_progress)
+    test_predictions = predict_dataframe(str(config.get("model", {}).get("name", run_dir.name)), model, arrays_by_split["test"], config=config)
     metrics = dict(train_result.metrics)
     metrics.update({f"test_{name}": value for name, value in evaluate_test_split(model, arrays_by_split, config).items()})
-    test_predictions = predict_dataframe(str(config.get("model", {}).get("name", run_dir.name)), model, arrays_by_split["test"], config=config)
+    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(test_predictions).items()})
     fit_ended_at = datetime.now()
     fit_duration_seconds = time.perf_counter() - fit_started_timer
     print_training_process_end(fit_ended_at, fit_duration_seconds, train_result.epoch_history)
@@ -202,10 +203,21 @@ def write_split_metrics(path: Path, metrics: dict[str, float]) -> None:
         writer = csv.DictWriter(file, fieldnames=["split", "metric", "value"])
         writer.writeheader()
         for name, value in metrics.items():
-            if "_" not in name:
+            split_name, metric_name = split_metric_key(name)
+            if split_name is None or metric_name is None:
                 continue
-            split_name, metric_name = name.split("_", 1)
             writer.writerow({"split": split_name, "metric": metric_name, "value": value})
+
+
+def split_metric_key(name: str) -> tuple[str | None, str | None]:
+    """Split a flattened metric key while preserving split names containing underscores."""
+    for metric_name in BASE_METRIC_NAMES:
+        suffix = f"_{metric_name}"
+        if name.endswith(suffix):
+            return name[: -len(suffix)], metric_name
+    if "_" not in name:
+        return None, None
+    return name.split("_", 1)
 
 
 def write_training_log(

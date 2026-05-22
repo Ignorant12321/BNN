@@ -1,7 +1,8 @@
 import numpy as np
+import pandas as pd
 import pytest
 
-from src.evaluation.metrics import regression_metrics
+from src.evaluation.metrics import generation_period_metrics, regression_metrics
 
 
 def test_regression_metrics_report_error_and_interval_scores_without_nll():
@@ -27,3 +28,24 @@ def test_regression_metrics_report_error_and_interval_scores_without_nll():
     assert metrics["nrmse"] == pytest.approx(np.sqrt(14.0 / 4.0) / 4.0)
     assert metrics["picp_90"] == pytest.approx(1.0)
     assert metrics["pinaw_90"] == pytest.approx((2 * 1.6448536269514722 * 2.0) / 4.0)
+
+
+def test_generation_period_metrics_include_0600_through_1800_targets():
+    frame = pd.DataFrame(
+        {
+            "target_time": [
+                "2020-01-01 05:45:00",
+                "2020-01-01 06:00:00",
+                "2020-01-01 18:00:00",
+                "2020-01-01 18:15:00",
+            ],
+            "target": [100.0, 10.0, 20.0, 200.0],
+            "mean": [0.0, 12.0, 23.0, 0.0],
+            "log_var": np.log([1.0, 4.0, 9.0, 1.0]),
+        }
+    )
+
+    metrics = generation_period_metrics(frame)
+
+    assert metrics["mae"] == pytest.approx(2.5)
+    assert metrics["rmse"] == pytest.approx(np.sqrt((2.0**2 + 3.0**2) / 2.0))

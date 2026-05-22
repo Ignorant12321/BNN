@@ -10,7 +10,7 @@ import pandas as pd
 from src.artifacts.run_io import load_model_artifact
 from src.data.pv import load_split_window_arrays_from_config
 from src.data.scaling import scaler_from_config, transform_window_arrays
-from src.evaluation.metrics import regression_metrics
+from src.evaluation.metrics import generation_period_metrics, regression_metrics
 from src.evaluation.predictor import predict_dataframe
 
 
@@ -39,10 +39,13 @@ def evaluate_run(label: str, run_dir: str | Path, split: str = "test") -> Evalua
         predictions.pivot(index="sample", columns="horizon", values="log_var").to_numpy(),
         predictions.pivot(index="sample", columns="horizon", values="target").to_numpy(),
     )
+    generation_metrics = generation_period_metrics(predictions)
+    flattened_metrics = {f"{split}_{name}": value for name, value in metrics.items()}
+    flattened_metrics.update({f"{split}_generation_{name}": value for name, value in generation_metrics.items()})
     return EvaluationResult(
         label=label,
         run_dir=run_path,
         model_name=str(config.get("model", {}).get("name", run_path.parent.name)),
-        metrics={f"{split}_{name}": value for name, value in metrics.items()},
+        metrics=flattened_metrics,
         predictions=predictions,
     )

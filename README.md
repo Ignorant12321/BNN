@@ -4,6 +4,8 @@
 
 训练阶段只使用 `train` 拟合模型，并用 `val_rmse` 回滚最佳 epoch 和执行早停；训练结束后会额外在 `test` split 上输出最终指标、预测 CSV 和固定时段预测曲线。预测曲线会同时展示均值、90% 预测区间和 95% 预测区间。Torch 后端会只用 train split 拟合标准化参数，在标准化空间训练模型，并在指标、预测 CSV 和图表中反变换回原始 `AC_POWER` 量纲。
 
+光伏功率具有明显昼夜周期，夜间功率长期接近 0。为避免夜间样本使区间覆盖率指标偏高，训练和对比评估会在全时段 `test` 指标之外，额外输出有效发电时段 `test_generation` 指标。有效发电时段按目标预测时刻的时刻部分定义为 `06:00 <= target_time <= 18:00`。全时段指标反映模型完整运行周期下的整体表现，`test_generation` 指标反映模型在实际发电阶段的预测性能。
+
 ## 环境
 
 ```powershell
@@ -198,6 +200,8 @@ outputs/train/<model_name>/<timestamp>/
 ```text
 mae, rmse, nmae, nrmse, picp_90, pinaw_90, picp_95, pinaw_95
 ```
+
+其中 `test` 为全时段测试集指标，`test_generation` 为目标预测时刻处于 `06:00-18:00` 的有效发电时段指标。
 
 ## 模型配置
 

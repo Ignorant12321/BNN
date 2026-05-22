@@ -175,7 +175,7 @@ def format_summary_table(rows: list[dict[str, str]]) -> str:
 def collect_fields(rows: list[dict[str, str]]) -> list[str]:
     """收集表格字段，保持主要字段靠前。"""
     fields = ["label", "model", "run_dir"]
-    for split_name in ("train", "val", "test"):
+    for split_name in ("train", "val", "test", "test_generation"):
         for metric_name in BASE_METRIC_NAMES:
             field = f"{split_name}_{metric_name}"
             if any(field in row for row in rows):

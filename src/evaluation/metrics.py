@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 
 BASE_METRIC_NAMES = (
@@ -44,6 +45,40 @@ def regression_metrics(mean: np.ndarray, log_var: np.ndarray, target: np.ndarray
         metrics[f"picp_{level}"] = float(np.mean(coverage))
         metrics[f"pinaw_{level}"] = float(np.mean(width) / scale)
     return metrics
+
+
+def prediction_frame_metrics(frame: pd.DataFrame) -> dict[str, float]:
+    """Calculate regression metrics from flattened prediction rows."""
+    if frame.empty:
+        return empty_metrics()
+    return regression_metrics(
+        frame["mean"].to_numpy(dtype=np.float32).reshape(-1, 1),
+        frame["log_var"].to_numpy(dtype=np.float32).reshape(-1, 1),
+        frame["target"].to_numpy(dtype=np.float32).reshape(-1, 1),
+    )
+
+
+def generation_period_metrics(frame: pd.DataFrame, start: str = "06:00", end: str = "18:00") -> dict[str, float]:
+    """Calculate metrics for target times in the effective PV generation period."""
+    subset = generation_period_subset(frame, start=start, end=end)
+    return prediction_frame_metrics(subset)
+
+
+def generation_period_subset(frame: pd.DataFrame, start: str = "06:00", end: str = "18:00") -> pd.DataFrame:
+    """Return rows whose target_time clock part is between start and end inclusive."""
+    if frame.empty or "target_time" not in frame.columns:
+        return frame.iloc[0:0].copy()
+    target_times = pd.to_datetime(frame["target_time"], errors="coerce")
+    clock = target_times.dt.time
+    start_time = pd.to_datetime(start, format="%H:%M").time()
+    end_time = pd.to_datetime(end, format="%H:%M").time()
+    mask = target_times.notna() & (clock >= start_time) & (clock <= end_time)
+    return frame.loc[mask].copy()
+
+
+def empty_metrics() -> dict[str, float]:
+    """Return metric placeholders for an empty evaluation subset."""
+    return {name: float("nan") for name in BASE_METRIC_NAMES}
 
 
 def normalization_scale(target: np.ndarray) -> float:
