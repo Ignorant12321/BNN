@@ -61,6 +61,7 @@ def test_load_config_supports_include_defaults_and_overrides(tmp_path: Path):
     assert config["data"]["horizon"] == 16
     assert config["training"]["backend"] == "torch"
     assert config["training"]["device"] == "auto"
+    assert config["training"]["weight_decay"] == 0.0
     assert config["output_dir"] == "outputs"
 
 

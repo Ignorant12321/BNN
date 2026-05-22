@@ -256,7 +256,6 @@ training:
   epochs: 50
   batch_size: 64
   lr: 0.0005
-  weight_decay: 0.0001
   kl_beta: 0.000001  # improved_bnn 使用
   early_stopping:
     enabled: true
@@ -296,10 +295,10 @@ python -m src.experiments.tune --config configs/tune/bnn.yaml --note "BNN hyperp
 默认配置在 `configs/tune/bnn.yaml`，会基于 `configs/models/bnn/24h.yaml` 搜索超参数，并用验证集 `val_rmse` 作为目标指标。默认搜索：
 
 ```text
-lr, weight_decay, kl_beta
+lr, kl_beta
 ```
 
-BNN 的网络结构当前按表 3 固定，`batch_size` 统一固定为 64，因此 Optuna 只搜索训练超参数，不再搜索 `hidden_dim`、`branch_dim`、`conv_kernel` 或 `batch_size`。
+BNN 默认不启用 `weight_decay`，网络结构当前按表 3 固定，`batch_size` 统一固定为 64，因此 Optuna 只搜索 `lr` 和 `kl_beta`，不再搜索 `hidden_dim`、`branch_dim`、`conv_kernel` 或 `batch_size`。
 
 4h BNN 可以使用独立调参配置，输出到独立 study，避免和 24h 调参混在一起：
 
@@ -345,7 +344,7 @@ outputs/tuning/bnn_optuna/
 Remove-Item -Recurse -Force outputs\tuning\bnn_4h_optuna
 ```
 
-然后重新运行 `python -m src.experiments.tune --config configs/tune/bnn_4h.yaml`。如果想保留旧结果并新开一组实验，更推荐改 tune YAML 里的 `name` 和 `study_name`，例如 `bnn_4h_optuna_v2`，这样会输出到新的稳定目录。删除 tuning 目录只会删除 Optuna study 和 trial 产物，不会撤销已经写入 `configs/models/bnn/4h.yaml` 的参数；如果要完全从公共默认配置重新搜索，需要先移除 4h 配置中已应用的 `training.lr`、`training.weight_decay` 和 `training.kl_beta` 覆盖。
+然后重新运行 `python -m src.experiments.tune --config configs/tune/bnn_4h.yaml`。如果想保留旧结果并新开一组实验，更推荐改 tune YAML 里的 `name` 和 `study_name`，例如 `bnn_4h_optuna_v2`，这样会输出到新的稳定目录。删除 tuning 目录只会删除 Optuna study 和 trial 产物，不会撤销已经写入 `configs/models/bnn/4h.yaml` 的参数；如果要完全从公共默认配置重新搜索，需要先移除 4h 配置中已应用的 `training.lr` 和 `training.kl_beta` 覆盖。
 
 调参 trial 的训练产物不会写到顶层 `outputs/train/`，而是写入当前 tuning 目录下的 `runs/trial-xxxx/`。
 

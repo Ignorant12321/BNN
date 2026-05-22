@@ -55,7 +55,7 @@ def apply_config_defaults(config: dict[str, Any]) -> dict[str, Any]:
     training.setdefault("epochs", 5)
     training.setdefault("batch_size", 32)
     training.setdefault("lr", 0.001)
-    training.setdefault("weight_decay", 0.0001)
+    training.setdefault("weight_decay", 0.0)
     training.setdefault("kl_beta", 0.0)
     return result
 
