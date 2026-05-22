@@ -3,6 +3,6 @@ include:
 data:
   lookback: 16
 training:
-  lr: 0.000958908024939246
-  weight_decay: 1.065661082111552e-05
-  kl_beta: 2.424070761872135e-07
+  lr: 0.000724616334571545
+  weight_decay: 1.0913719530885866e-05
+  kl_beta: 1.101977843048957e-06
