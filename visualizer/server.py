@@ -351,13 +351,27 @@ def create_comparison(
         if label:
             parsed["label"] = label
         parsed_runs.append(parsed)
+    runner_runs = parsed_runs
     if compare_runner is None:
         ensure_project_root_on_syspath(project_root)
         from src.experiments.compare import run_compare_from_runs
 
         compare_runner = run_compare_from_runs
-    out_dir = compare_runner(parsed_runs, name=name or "visualizer", output_dir=project_root / "outputs", split=split or "test", note=note)
+        runner_runs = [_resolve_runner_run_path(run, project_root) for run in parsed_runs]
+    out_dir = compare_runner(runner_runs, name=name or "visualizer", output_dir=project_root / "outputs", split=split or "test", note=note)
     return read_comparison(safe_relative(Path(out_dir), project_root), project_root)
+
+
+def _resolve_runner_run_path(run: dict[str, str], project_root: Path) -> dict[str, str]:
+    path = Path(run["path"])
+    resolved = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+    try:
+        resolved.relative_to(project_root.resolve())
+    except ValueError as error:
+        raise ValueError("run path must stay inside the project") from error
+    result = dict(run)
+    result["path"] = str(resolved)
+    return result
 
 
 def discover_runs(output_root: str | Path = PROJECT_ROOT / "outputs", project_root: Path | None = None) -> list[dict[str, Any]]:

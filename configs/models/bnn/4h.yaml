@@ -3,5 +3,7 @@ include:
 data:
   lookback: 16
 training:
-  lr: 0.000724616334571545
-  kl_beta: 1.101977843048957e-06
+  lr: 0.000997301887226016
+  kl_beta: 2.7660301351829655e-07
+  early_stopping:
+    metric: val_generation_nrmse

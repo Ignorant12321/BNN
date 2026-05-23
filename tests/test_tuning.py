@@ -53,6 +53,15 @@ def test_read_metric_from_run_reads_metrics_csv(tmp_path: Path):
     assert read_metric_from_run(tmp_path, "val_rmse") == 1.25
 
 
+def test_read_metric_from_run_supports_split_names_with_underscores(tmp_path: Path):
+    (tmp_path / "metrics.csv").write_text(
+        "split,metric,value\nval_generation,nrmse,0.052\nval,rmse,1.25\n",
+        encoding="utf-8",
+    )
+
+    assert read_metric_from_run(tmp_path, "val_generation_nrmse") == 0.052
+
+
 def test_run_tuning_uses_sqlite_storage_and_resumes_to_target_trials(tmp_path: Path, monkeypatch):
     base_config_path = tmp_path / "base.yaml"
     base_config_path.write_text(
@@ -171,5 +180,6 @@ def test_bnn_tuning_configs_use_fixed_batch_size_and_distinct_4h_study():
     assert main_config["search_space"].get("batch_size") is None
     assert four_hour_config["search_space"].get("batch_size") is None
     assert four_hour_config["base_config"] == "../models/bnn/4h.yaml"
-    assert four_hour_config["name"] == "bnn_4h_optuna"
-    assert four_hour_config["study_name"] == "bnn_4h_optuna"
+    assert four_hour_config["name"] == "bnn_4h_generation_optuna"
+    assert four_hour_config["study_name"] == "bnn_4h_generation_optuna"
+    assert four_hour_config["metric"] == "val_generation_nrmse"

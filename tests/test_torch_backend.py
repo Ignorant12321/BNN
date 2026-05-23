@@ -4,7 +4,13 @@ from src.data.pv import WindowArrays
 from src.evaluation.predictor import predict_arrays
 from src.models.registry import build_model
 from src.models.torch_models import BayesianConv1d, BayesianLinear
-from src.training.torch_trainer import arrays_to_torch_dataset, evaluate_torch_model, resolve_torch_device, train_torch_model
+from src.training.torch_trainer import (
+    arrays_to_torch_dataset,
+    early_stopping_monitor_metric,
+    evaluate_torch_model,
+    resolve_torch_device,
+    train_torch_model,
+)
 
 
 def test_resolve_torch_device_accepts_auto_or_cuda():
@@ -27,6 +33,16 @@ def test_registry_builds_torch_model_when_backend_is_torch():
     model = build_model(config)
 
     assert getattr(model, "is_torch_model", False)
+
+
+def test_bayesian_linear_accepts_zero_input_features_without_division_error():
+    import torch
+
+    layer = BayesianLinear(0, 3)
+    output = layer(torch.zeros((2, 0), dtype=torch.float32))
+
+    assert output.shape == (2, 3)
+    assert float(layer.kl_loss().detach().cpu()) > 0.0
 
 
 def test_torch_trainer_reduces_simple_direct_error():
@@ -145,6 +161,13 @@ def test_torch_trainer_stops_early_after_validation_patience():
     assert history[-1]["early_stop"] == 1.0
 
 
+def test_early_stopping_monitor_metric_can_use_generation_validation_metric():
+    training = {"early_stopping": {"enabled": True, "metric": "val_generation_nrmse"}}
+
+    assert early_stopping_monitor_metric(training) == "val_generation_nrmse"
+    assert early_stopping_monitor_metric({}) == "val_rmse"
+
+
 def test_evaluate_torch_model_uses_mc_samples_for_stochastic_models():
     import torch
 
@@ -203,6 +226,34 @@ def test_improved_bnn_matches_tab3_fixed_structure():
     assert not hasattr(model, "direct_branch")
     assert any(isinstance(module, BayesianLinear) for module in model.modules())
     assert any(isinstance(module, BayesianConv1d) for module in model.modules())
+    assert float(model.kl_loss().detach().cpu()) > 0.0
+
+
+def test_improved_bnn_supports_zero_lookback_with_weather_and_direct_only():
+    config = {
+        "data": {
+            "lookback": 0,
+            "horizon": 2,
+            "features": {"history": [], "weather": ["w"], "direct": ["d"], "target": "y"},
+        },
+        "model": {"name": "improved_bnn"},
+        "training": {"backend": "torch", "device": "auto"},
+        "evaluation": {"n_samples": 2},
+    }
+    model = build_model(config)
+    arrays = WindowArrays(
+        history=np.zeros((3, 0, 0), dtype=np.float32),
+        weather=np.ones((3, 2, 1), dtype=np.float32),
+        direct=np.ones((3, 1), dtype=np.float32),
+        target=np.zeros((3, 2), dtype=np.float32),
+    )
+
+    mean, log_var = predict_arrays(model, arrays, config=config)
+
+    assert mean.shape == (3, 2)
+    assert log_var.shape == (3, 2)
+    assert not hasattr(model, "history_fc")
+    assert not hasattr(model, "history_conv1")
     assert float(model.kl_loss().detach().cpu()) > 0.0
 
 

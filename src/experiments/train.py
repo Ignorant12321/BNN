@@ -68,8 +68,20 @@ def run_training(config: dict[str, Any], note: str | None = None) -> Path:
     fit_started_timer = time.perf_counter()
     print_training_process_start(fit_started_at)
     train_result = train_model(model, arrays_by_split, config, epoch_callback=print_epoch_progress)
-    test_predictions = predict_dataframe(str(config.get("model", {}).get("name", run_dir.name)), model, arrays_by_split["test"], config=config)
+    model_label = str(config.get("model", {}).get("name", run_dir.name))
+    generation_predictions = {
+        split_name: predict_dataframe(model_label, model, arrays_by_split[split_name], config=config)
+        for split_name in ("train", "val", "test")
+    }
+    test_predictions = generation_predictions["test"]
     metrics = dict(train_result.metrics)
+    for split_name in ("train", "val"):
+        metrics.update(
+            {
+                f"{split_name}_generation_{name}": value
+                for name, value in generation_period_metrics(generation_predictions[split_name]).items()
+            }
+        )
     metrics.update({f"test_{name}": value for name, value in evaluate_test_split(model, arrays_by_split, config).items()})
     metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(test_predictions).items()})
     fit_ended_at = datetime.now()
@@ -180,8 +192,10 @@ def write_epoch_history(path: Path, epoch_history: list[dict[str, float]]) -> No
     """写出每轮训练 loss。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["epoch", "loss"]
-    if any("val_rmse" in item for item in epoch_history):
-        fieldnames.append("val_rmse")
+    for item in epoch_history:
+        for key in item:
+            if key not in fieldnames and key != "early_stop":
+                fieldnames.append(key)
     if any("early_stop" in item for item in epoch_history):
         fieldnames.append("early_stop")
     with path.open("w", encoding="utf-8", newline="") as file:
@@ -189,8 +203,9 @@ def write_epoch_history(path: Path, epoch_history: list[dict[str, float]]) -> No
         writer.writeheader()
         for item in epoch_history:
             row = {"epoch": int(item["epoch"]), "loss": item["loss"]}
-            if "val_rmse" in item:
-                row["val_rmse"] = item["val_rmse"]
+            for key, value in item.items():
+                if key not in {"epoch", "loss", "early_stop"}:
+                    row[key] = value
             if "early_stop" in item:
                 row["early_stop"] = item["early_stop"]
             writer.writerow(row)

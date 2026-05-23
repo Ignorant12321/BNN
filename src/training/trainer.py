@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from src.evaluation.metrics import evaluate_arrays
-from src.training.torch_trainer import evaluate_torch_model, train_torch_model
+from src.training.torch_trainer import early_stopping_monitor_metric, evaluate_torch_model, train_torch_model
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ def train_model(
         metrics = evaluate_train_val(model, arrays_by_split, evaluate_arrays)
     else:
         metrics = evaluate_train_val(model, arrays_by_split, evaluate_arrays)
-    best_epoch = best_epoch_from_history(epoch_history)
+    best_epoch = best_epoch_from_history(epoch_history, monitor_metric=training_monitor_metric(config))
     return TrainResult(metrics=metrics, epoch_history=epoch_history, best_epoch=best_epoch)
 
 
@@ -56,9 +56,14 @@ def evaluate_train_val(model, arrays_by_split: dict[str, Any], evaluator) -> dic
     return metrics
 
 
-def best_epoch_from_history(epoch_history: list[dict[str, float]]) -> int | None:
-    """根据验证 RMSE 或训练 loss 选择最佳 epoch。"""
+def training_monitor_metric(config: dict[str, Any]) -> str:
+    """Return the metric used to identify the best epoch for this training run."""
+    return early_stopping_monitor_metric(config.get("training", {}))
+
+
+def best_epoch_from_history(epoch_history: list[dict[str, float]], monitor_metric: str = "val_rmse") -> int | None:
+    """根据配置的验证指标或训练 loss 选择最佳 epoch。"""
     if not epoch_history:
         return None
-    best = min(epoch_history, key=lambda item: item.get("val_rmse", item["loss"]))
+    best = min(epoch_history, key=lambda item: item.get(monitor_metric, item.get("val_rmse", item["loss"])))
     return int(best["epoch"])

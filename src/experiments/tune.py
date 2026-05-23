@@ -200,11 +200,10 @@ def read_metric_from_run(run_dir: str | Path, metric_name: str) -> float:
     """从训练产物的 metrics.csv 读取形如 val_rmse 的指标。"""
     if "_" not in metric_name:
         raise ValueError("metric must use split_metric form, for example val_rmse")
-    split_name, metric = metric_name.split("_", 1)
     metrics_path = Path(run_dir) / "metrics.csv"
     with metrics_path.open("r", encoding="utf-8", newline="") as file:
         for row in csv.DictReader(file):
-            if row.get("split") == split_name and row.get("metric") == metric:
+            if f"{row.get('split')}_{row.get('metric')}" == metric_name:
                 return float(row["value"])
     raise ValueError(f"metric {metric_name!r} not found in {metrics_path}")
 

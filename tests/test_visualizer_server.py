@@ -13,6 +13,55 @@ from visualizer.server import (
     list_train_runs,
     read_comparison,
 )
+from src.experiments.train import run_training
+
+
+def _write_small_processed_splits(processed_dir: Path) -> None:
+    processed_dir.mkdir()
+    frame = "\n".join(
+        [
+            "DATE_TIME,AC_POWER,AMBIENT_TEMPERATURE,MODULE_TEMPERATURE,IRRADIATION",
+            "2020-01-01 07:00:00,1.0,20.0,25.0,0.1",
+            "2020-01-01 07:15:00,2.0,21.0,26.0,0.2",
+            "2020-01-01 07:30:00,3.0,22.0,27.0,0.3",
+            "2020-01-01 07:45:00,4.0,23.0,28.0,0.4",
+            "2020-01-01 08:00:00,5.0,24.0,29.0,0.5",
+            "2020-01-01 08:15:00,6.0,25.0,30.0,0.6",
+        ]
+    )
+    for split_name in ("train", "val", "test"):
+        (processed_dir / f"{split_name}.csv").write_text(frame + "\n", encoding="utf-8")
+
+
+def _zero_hour_bnn_config(tmp_path: Path, processed_dir: Path) -> dict:
+    return {
+        "output_dir": str(tmp_path / "outputs"),
+        "data": {
+            "generation_path": str(tmp_path / "missing_generation.csv"),
+            "weather_path": str(tmp_path / "missing_weather.csv"),
+            "processed_dir": str(processed_dir),
+            "lookback": 0,
+            "horizon": 1,
+            "features": {
+                "history": [],
+                "weather": ["AMBIENT_TEMPERATURE", "MODULE_TEMPERATURE", "IRRADIATION"],
+                "direct": ["AC_POWER"],
+                "target": "AC_POWER",
+            },
+        },
+        "model": {"name": "improved_bnn"},
+        "training": {
+            "backend": "torch",
+            "device": "cpu",
+            "epochs": 1,
+            "batch_size": 2,
+            "lr": 0.001,
+            "kl_beta": 0.0,
+            "weight_decay": 0.0,
+            "early_stopping": {"enabled": False},
+        },
+        "evaluation": {"n_samples": 2},
+    }
 
 
 def test_discover_runs_reads_training_artifacts(tmp_path: Path):
@@ -233,6 +282,24 @@ def test_create_comparison_uses_existing_compare_runner(tmp_path: Path):
     }
     assert payload["comparison"]["path"] == "outputs/comparisons/20260521-180000"
     assert payload["runs"][0]["label"] == "BNN-1h"
+
+
+def test_create_comparison_with_real_runner_supports_zero_hour_bnn(tmp_path: Path):
+    processed_dir = tmp_path / "processed"
+    _write_small_processed_splits(processed_dir)
+    run_dir = run_training(_zero_hour_bnn_config(tmp_path, processed_dir))
+
+    payload = create_comparison(
+        [{"label": "BNN-0h", "path": str(run_dir.relative_to(tmp_path))}],
+        tmp_path,
+        name="visualizer",
+        split="test",
+        note="zero hour compare",
+    )
+
+    assert payload["comparison"]["runCount"] == 1
+    assert payload["runs"][0]["label"] == "BNN-0h"
+    assert payload["runs"][0]["predictionSummary"]["rows"] > 0
 
 
 def test_ensure_project_root_on_syspath_inserts_project_root(tmp_path: Path, monkeypatch):

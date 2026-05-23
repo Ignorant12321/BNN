@@ -95,6 +95,8 @@ def scaler_from_config(config: dict[str, Any]) -> ScalerPayload | None:
 
 
 def _fit_feature_scaler(values: np.ndarray) -> dict[str, Any]:
+    if values.shape[-1] == 0:
+        return {"mean": [], "std": []}
     axes = tuple(range(values.ndim - 1))
     mean = np.mean(values, axis=axes)
     std = _safe_std(np.std(values, axis=axes))

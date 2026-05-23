@@ -35,3 +35,18 @@ def test_window_scaler_fits_train_split_only_and_restores_target_predictions():
 
     np.testing.assert_allclose(restored_mean, val.target)
     np.testing.assert_allclose(np.exp(restored_log_var), np.ones_like(val.target) * np.std(train.target) ** 2, rtol=1e-5)
+
+
+def test_window_scaler_handles_empty_history_features():
+    train = WindowArrays(
+        history=np.zeros((2, 0, 0), dtype=np.float32),
+        weather=np.ones((2, 1, 1), dtype=np.float32),
+        direct=np.ones((2, 1), dtype=np.float32),
+        target=np.ones((2, 1), dtype=np.float32),
+    )
+
+    scaler = fit_window_scaler({"train": train})
+
+    assert scaler["history"] == {"mean": [], "std": []}
+    transformed = transform_window_arrays_by_split({"train": train}, scaler)["train"]
+    assert transformed.history.shape == (2, 0, 0)

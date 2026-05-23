@@ -1,0 +1,13 @@
+include:
+  - bnn.yaml
+
+data:
+  lookback: 0
+  features:
+    history: []
+    weather:
+      - AMBIENT_TEMPERATURE
+      - MODULE_TEMPERATURE
+      - IRRADIATION
+    direct:
+      - AC_POWER

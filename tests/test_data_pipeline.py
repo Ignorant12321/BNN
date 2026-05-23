@@ -69,6 +69,53 @@ def test_make_window_arrays_uses_history_weather_direct_and_target():
     np.testing.assert_array_equal(arrays.target[0], np.array([3.0, 4.0], dtype=np.float32))
 
 
+def test_make_window_arrays_allows_zero_lookback_with_previous_direct_power():
+    frame = pd.DataFrame(
+        {
+            "DATE_TIME": pd.date_range("2020-05-15 00:00:00", periods=4, freq="15min"),
+            "AC_POWER": [1.0, 2.0, 3.0, 4.0],
+            "IRRADIATION": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
+    columns = FeatureColumns(history=[], weather=["IRRADIATION"], direct=["AC_POWER"], target="AC_POWER")
+
+    arrays = make_window_arrays(frame, columns, lookback=0, horizon=2)
+
+    assert arrays.history.shape == (2, 0, 0)
+    assert arrays.weather.shape == (2, 2, 1)
+    assert arrays.direct.shape == (2, 1)
+    assert arrays.target.shape == (2, 2)
+    np.testing.assert_array_equal(arrays.direct[:, 0], np.array([1.0, 2.0], dtype=np.float32))
+    np.testing.assert_array_equal(arrays.target[0], np.array([2.0, 3.0], dtype=np.float32))
+    np.testing.assert_array_equal(arrays.target_time[0], np.array(["2020-05-15 00:15:00", "2020-05-15 00:30:00"]))
+
+
+def test_make_window_arrays_derives_requested_time_weather_features_from_date_time():
+    frame = pd.DataFrame(
+        {
+            "DATE_TIME": pd.date_range("2020-05-15 05:45:00", periods=4, freq="15min"),
+            "AC_POWER": [0.0, 1.0, 2.0, 3.0],
+            "IRRADIATION": [0.0, 0.1, 0.2, 0.3],
+        }
+    )
+    columns = FeatureColumns(
+        history=["AC_POWER"],
+        weather=["IRRADIATION", "hour_sin", "hour_cos", "dayofyear_sin", "dayofyear_cos", "is_generation_time"],
+        direct=["AC_POWER"],
+        target="AC_POWER",
+    )
+
+    arrays = make_window_arrays(frame, columns, lookback=1, horizon=2)
+
+    first_future_time = pd.Timestamp("2020-05-15 06:00:00")
+    hour_fraction = first_future_time.hour + first_future_time.minute / 60.0
+    expected_hour_sin = np.sin(2.0 * np.pi * hour_fraction / 24.0)
+    expected_hour_cos = np.cos(2.0 * np.pi * hour_fraction / 24.0)
+    np.testing.assert_allclose(arrays.weather[0, 0, 1], expected_hour_sin, rtol=1e-6)
+    np.testing.assert_allclose(arrays.weather[0, 0, 2], expected_hour_cos, rtol=1e-6)
+    assert arrays.weather[0, 0, 5] == 1.0
+
+
 def test_make_window_arrays_skips_windows_crossing_time_gaps():
     frame = pd.DataFrame(
         {

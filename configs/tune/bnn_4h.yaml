@@ -1,12 +1,13 @@
-name: bnn_4h_optuna
+name: bnn_4h_generation_optuna
 base_config: ../models/bnn/4h.yaml
 output_dir: outputs
-study_name: bnn_4h_optuna
+study_name: bnn_4h_generation_optuna
 direction: minimize
-metric: val_rmse
+metric: val_generation_nrmse
 n_trials: 100
 
 # batch_size 固定为 BNN 默认配置中的 64；这里只搜索训练超参数。
+# 使用有效发电时段验证集 NRMSE 作为调参目标，避免夜间零功率样本稀释白天误差。
 search_space:
   lr:
     type: log_float

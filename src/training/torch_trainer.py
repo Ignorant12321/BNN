@@ -13,8 +13,8 @@ from typing import Any
 
 import numpy as np
 
-from src.evaluation.metrics import regression_metrics
-from src.evaluation.predictor import predict_arrays
+from src.evaluation.metrics import generation_period_metrics, prediction_frame_metrics, regression_metrics
+from src.evaluation.predictor import predict_arrays, predict_dataframe
 from src.data.scaling import inverse_target_prediction, inverse_target_values
 from src.torch_runtime import import_torch
 
@@ -69,6 +69,7 @@ def train_torch_model(
     best_metric = float("inf")
     patience = early_stopping_patience(training)
     min_delta = early_stopping_min_delta(training)
+    monitor_metric = early_stopping_monitor_metric(training)
     stale_epochs = 0
     for epoch_index in range(int(training.get("epochs", 20))):
         batch_losses = []
@@ -88,11 +89,12 @@ def train_torch_model(
         if batch_losses:
             item = {"epoch": float(epoch_index + 1), "loss": float(np.mean(batch_losses))}
             if validation_arrays is not None:
-                val_metrics = evaluate_torch_model(model, validation_arrays, device=device, config=config)
+                val_metrics = evaluate_torch_validation_metrics(model, validation_arrays, device=device, config=config)
                 model.train()
-                item["val_rmse"] = val_metrics["rmse"]
-                if val_metrics["rmse"] < best_metric - min_delta:
-                    best_metric = val_metrics["rmse"]
+                item.update(val_metrics)
+                monitor_value = item[monitor_metric]
+                if np.isfinite(monitor_value) and monitor_value < best_metric - min_delta:
+                    best_metric = monitor_value
                     best_state_dict = {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
                     stale_epochs = 0
                 else:
@@ -127,6 +129,25 @@ def early_stopping_min_delta(training: dict[str, Any]) -> float:
     if isinstance(config, dict):
         return float(config.get("min_delta", 0.0))
     return float(training.get("min_delta", 0.0))
+
+
+def early_stopping_monitor_metric(training: dict[str, Any]) -> str:
+    """Return the validation metric key used for best-epoch selection."""
+    config = training.get("early_stopping")
+    if isinstance(config, dict):
+        return str(config.get("metric", "val_rmse"))
+    return str(training.get("early_stopping_metric", "val_rmse"))
+
+
+def evaluate_torch_validation_metrics(model, arrays, device=None, config: dict[str, Any] | None = None) -> dict[str, float]:
+    """Evaluate validation metrics including effective generation-period metrics."""
+    if device is None:
+        device = next(model.parameters()).device
+    model.to(device)
+    predictions = predict_dataframe("validation", model, arrays, config=config)
+    metrics = {f"val_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
+    metrics.update({f"val_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    return metrics
 
 
 def evaluate_torch_model(model, arrays, device=None, config: dict[str, Any] | None = None) -> dict[str, float]:

@@ -5,6 +5,7 @@ import pytest
 from src.data.pv import WindowArrays
 import src.experiments.train as train_module
 from src.experiments.train import evaluate_model, load_or_make_split_arrays, run_training
+from src.training.trainer import best_epoch_from_history
 from src.models.baselines import RidgeProbabilisticModel
 
 
@@ -32,6 +33,15 @@ def test_evaluate_model_uses_all_windows_not_only_first_batch(tmp_path):
     metrics = evaluate_model(RowIndexModel(), arrays)
 
     assert metrics["rmse"] == pytest.approx(np.sqrt((0.0**2 + 10.0**2 + 20.0**2) / 3.0))
+
+
+def test_best_epoch_from_history_uses_configured_monitor_metric():
+    history = [
+        {"epoch": 1.0, "loss": 3.0, "val_rmse": 1.0, "val_generation_nrmse": 0.30},
+        {"epoch": 2.0, "loss": 2.0, "val_rmse": 2.0, "val_generation_nrmse": 0.10},
+    ]
+
+    assert best_epoch_from_history(history, monitor_metric="val_generation_nrmse") == 2
 
 
 def test_load_or_make_split_arrays_reads_existing_splits_without_cross_split_history(tmp_path):
@@ -140,8 +150,12 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert "epoch,loss" in epoch_history
     assert "train,rmse" in split_metrics
     assert "train,mae" in split_metrics
+    assert "train_generation,rmse" in split_metrics
+    assert "train_generation,picp_90" in split_metrics
     assert "val,rmse" in split_metrics
     assert "val,picp_90" in split_metrics
+    assert "val_generation,rmse" in split_metrics
+    assert "val_generation,picp_90" in split_metrics
     assert "test,rmse" in split_metrics
     assert "test,picp_90" in split_metrics
     assert "test_generation,rmse" in split_metrics

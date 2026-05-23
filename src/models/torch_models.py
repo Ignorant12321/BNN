@@ -34,7 +34,7 @@ class BayesianLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        bound = 1.0 / math.sqrt(self.in_features)
+        bound = 1.0 / math.sqrt(self.in_features) if self.in_features > 0 else 0.0
         nn.init.uniform_(self.weight_mu, -bound, bound)
         nn.init.uniform_(self.bias_mu, -bound, bound)
         nn.init.constant_(self.weight_rho, -5.0)
@@ -86,7 +86,8 @@ class BayesianConv1d(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        bound = 1.0 / math.sqrt(self.in_channels * self.kernel_size)
+        fan_in = self.in_channels * self.kernel_size
+        bound = 1.0 / math.sqrt(fan_in) if fan_in > 0 else 0.0
         nn.init.uniform_(self.weight_mu, -bound, bound)
         nn.init.uniform_(self.bias_mu, -bound, bound)
         nn.init.constant_(self.weight_rho, -5.0)
@@ -151,22 +152,27 @@ class ImprovedBayesianTorchNet(ProbabilisticTorchModel):
     ):
         super().__init__()
         self.horizon = int(horizon)
+        self.has_history_branch = int(lookback) > 0 and int(history_features) > 0
         history_flat_dim = int(lookback) * int(history_features)
         weather_flat_dim = int(horizon) * int(weather_features)
-        self.history_fc = nn.Sequential(
-            BayesianLinear(history_flat_dim, 32),
-            nn.ReLU(),
-            BayesianLinear(32, 64),
-            nn.ReLU(),
-            BayesianLinear(64, 16),
-            nn.ReLU(),
-        )
-        self.history_conv1 = BayesianConv1d(history_features, 32, kernel_size=5, padding=2)
-        self.history_conv2 = BayesianConv1d(32, 32, kernel_size=5, padding=2)
-        self.conv_pool = nn.AvgPool1d(kernel_size=5, stride=1, padding=2)
-        self.conv_global_pool = nn.AdaptiveAvgPool1d(1)
+        if self.has_history_branch:
+            self.history_fc = nn.Sequential(
+                BayesianLinear(history_flat_dim, 32),
+                nn.ReLU(),
+                BayesianLinear(32, 64),
+                nn.ReLU(),
+                BayesianLinear(64, 16),
+                nn.ReLU(),
+            )
+            self.history_conv1 = BayesianConv1d(history_features, 32, kernel_size=5, padding=2)
+            self.history_conv2 = BayesianConv1d(32, 32, kernel_size=5, padding=2)
+            self.conv_pool = nn.AvgPool1d(kernel_size=5, stride=1, padding=2)
+            self.conv_global_pool = nn.AdaptiveAvgPool1d(1)
         self.third_input_dim = weather_flat_dim + int(direct_features)
-        fusion_dim = 16 + 32 + self.third_input_dim
+        history_branch_dim = 16 + 32 if self.has_history_branch else 0
+        fusion_dim = history_branch_dim + self.third_input_dim
+        if fusion_dim <= 0:
+            raise ValueError("improved_bnn requires at least one input feature")
         self.fusion = nn.Sequential(
             BayesianLinear(fusion_dim, 32),
             nn.ReLU(),
@@ -178,18 +184,21 @@ class ImprovedBayesianTorchNet(ProbabilisticTorchModel):
 
     def forward(self, batch: dict) -> tuple:
         history = batch["history"]
-        history_flat = history.reshape(len(history), -1)
-        fc_features = self.history_fc(history_flat)
-        conv_inputs = history.transpose(1, 2)
-        conv_features = F.relu(self.history_conv1(conv_inputs))
-        conv_features = self.conv_pool(conv_features)
-        conv_features = F.relu(self.history_conv2(conv_features))
-        conv_features = self.conv_global_pool(conv_features).squeeze(-1)
+        feature_parts = []
+        if self.has_history_branch:
+            history_flat = history.reshape(len(history), -1)
+            feature_parts.append(self.history_fc(history_flat))
+            conv_inputs = history.transpose(1, 2)
+            conv_features = F.relu(self.history_conv1(conv_inputs))
+            conv_features = self.conv_pool(conv_features)
+            conv_features = F.relu(self.history_conv2(conv_features))
+            feature_parts.append(self.conv_global_pool(conv_features).squeeze(-1))
         third_features = torch.cat(
             [batch["weather"].reshape(len(history), -1), batch["direct"].reshape(len(history), -1)],
             dim=1,
         )
-        features = torch.cat([fc_features, conv_features, third_features], dim=1)
+        feature_parts.append(third_features)
+        features = torch.cat(feature_parts, dim=1)
         z = self.fusion(features)
         return self.mean_head(z), torch.clamp(self.log_var_head(z), min=-10.0, max=6.0)
 

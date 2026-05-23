@@ -44,6 +44,11 @@ def test_run_preprocess_writes_merged_csv(tmp_path: Path):
         "AMBIENT_TEMPERATURE",
         "MODULE_TEMPERATURE",
         "IRRADIATION",
+        "hour_sin",
+        "hour_cos",
+        "dayofyear_sin",
+        "dayofyear_cos",
+        "is_generation_time",
     ]
     assert len(frame) == 8
 

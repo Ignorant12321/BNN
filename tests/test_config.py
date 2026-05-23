@@ -67,6 +67,7 @@ def test_load_config_supports_include_defaults_and_overrides(tmp_path: Path):
 
 def test_project_model_configs_use_nested_defaults():
     expected = {
+        "configs/models/bnn/0h.yaml": ("improved_bnn", 0),
         "configs/models/bnn/1h.yaml": ("improved_bnn", 4),
         "configs/models/bnn/4h.yaml": ("improved_bnn", 16),
         "configs/models/bnn/8h.yaml": ("improved_bnn", 32),
@@ -88,3 +89,18 @@ def test_project_model_configs_use_nested_defaults():
             assert config["training"]["batch_size"] == 64
             assert config["training"]["early_stopping"]["enabled"] is True
             assert int(config["training"]["early_stopping"]["patience"]) > 0
+            if config_path == "configs/models/bnn/4h.yaml":
+                assert config["training"]["early_stopping"]["metric"] == "val_generation_nrmse"
+
+
+def test_bnn_configs_use_irradiation_without_explicit_time_features():
+    four_hour = load_config("configs/models/bnn/4h.yaml")
+    day = load_config("configs/models/bnn/24h.yaml")
+    expected_weather = [
+        "AMBIENT_TEMPERATURE",
+        "MODULE_TEMPERATURE",
+        "IRRADIATION",
+    ]
+
+    assert four_hour["data"]["features"]["weather"] == expected_weather
+    assert day["data"]["features"]["weather"] == expected_weather

@@ -58,6 +58,13 @@ DEFAULT_FEATURE_COLUMNS = FeatureColumns(
 
 EXPECTED_STEP = pd.Timedelta(minutes=15)
 DAYLIGHT_IRRADIATION_THRESHOLD = 0.02
+TIME_FEATURE_COLUMNS = [
+    "hour_sin",
+    "hour_cos",
+    "dayofyear_sin",
+    "dayofyear_cos",
+    "is_generation_time",
+]
 
 
 def load_plant_dataframe(generation_path: str | Path, weather_path: str | Path) -> pd.DataFrame:
@@ -95,13 +102,33 @@ def load_plant_dataframe(generation_path: str | Path, weather_path: str | Path) 
         .sort_values("DATE_TIME")
     )
     merged = generation_agg.merge(weather_agg, on="DATE_TIME", how="inner").sort_values("DATE_TIME")
-    return merged.reset_index(drop=True)
+    return add_time_features(merged.reset_index(drop=True))
+
+
+def add_time_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add cyclic time features derived from DATE_TIME when available."""
+    if "DATE_TIME" not in frame.columns:
+        return frame
+    work = frame.copy()
+    times = pd.to_datetime(work["DATE_TIME"])
+    hour_fraction = times.dt.hour + times.dt.minute / 60.0 + times.dt.second / 3600.0
+    hour_angle = 2.0 * np.pi * hour_fraction / 24.0
+    year_position = (times.dt.dayofyear - 1 + hour_fraction / 24.0) / 366.0
+    dayofyear_angle = 2.0 * np.pi * year_position
+    work["hour_sin"] = np.sin(hour_angle).astype(np.float32)
+    work["hour_cos"] = np.cos(hour_angle).astype(np.float32)
+    work["dayofyear_sin"] = np.sin(dayofyear_angle).astype(np.float32)
+    work["dayofyear_cos"] = np.cos(dayofyear_angle).astype(np.float32)
+    work["is_generation_time"] = ((hour_fraction >= 6.0) & (hour_fraction <= 18.0)).astype(np.float32)
+    return work
 
 
 def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: int, horizon: int) -> WindowArrays:
     """从单个按时间排序的数据表构造监督学习滑动窗口。"""
-    if lookback <= 0 or horizon <= 0:
-        raise ValueError("lookback and horizon must be positive")
+    if lookback < 0 or horizon <= 0:
+        raise ValueError("lookback must be non-negative and horizon must be positive")
+    if any(name in TIME_FEATURE_COLUMNS for name in columns.history + columns.weather + columns.direct):
+        frame = add_time_features(frame)
     required = set(columns.history + columns.weather + columns.direct + [columns.target])
     missing = sorted(required.difference(frame.columns))
     if missing:
@@ -136,13 +163,17 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
     direct_rows = []
     target_windows = []
     target_time_windows = []
-    for start in range(0, len(frame) - lookback - horizon + 1):
-        split = start + lookback
+    min_split = int(lookback)
+    if lookback == 0 and columns.direct:
+        min_split = 1
+    for split in range(min_split, len(frame) - horizon + 1):
+        start = split - lookback
         end = split + horizon
-        if parsed_times is not None and not _has_continuous_15min_steps(parsed_times.iloc[start:end]):
+        continuity_start = split - 1 if lookback == 0 and columns.direct else start
+        if parsed_times is not None and not _has_continuous_15min_steps(parsed_times.iloc[continuity_start:end]):
             continue
         if source_counts is not None and generating_values is not None:
-            quality_slice = slice(start, end)
+            quality_slice = slice(continuity_start, end)
             incomplete_generating_rows = generating_values[quality_slice] & (
                 source_counts[quality_slice] < expected_source_counts[quality_slice]
             )
@@ -150,7 +181,7 @@ def make_window_arrays(frame: pd.DataFrame, columns: FeatureColumns, lookback: i
                 continue
         history_windows.append(history_values[start:split])
         weather_windows.append(weather_values[split:end])
-        direct_rows.append(direct_values[split - 1])
+        direct_rows.append(direct_values[split - 1 if split > 0 else split])
         target_windows.append(target_values[split:end])
         if time_values is not None:
             target_time_windows.append(time_values[split:end])
