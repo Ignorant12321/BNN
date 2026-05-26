@@ -30,6 +30,21 @@ def test_regression_metrics_report_error_and_interval_scores_without_nll():
     assert metrics["pinaw_90"] == pytest.approx((2 * 1.6448536269514722 * 2.0) / 4.0)
 
 
+def test_regression_metrics_mark_interval_scores_nan_without_uncertainty():
+    mean = np.array([[1.0, 3.0]], dtype=np.float32)
+    target = np.array([[2.0, 1.0]], dtype=np.float32)
+    log_var = np.full_like(mean, np.nan, dtype=np.float32)
+
+    metrics = regression_metrics(mean, log_var, target)
+
+    assert metrics["mae"] == pytest.approx(1.5)
+    assert metrics["rmse"] == pytest.approx(np.sqrt(5.0 / 2.0))
+    assert np.isnan(metrics["picp_90"])
+    assert np.isnan(metrics["pinaw_90"])
+    assert np.isnan(metrics["picp_95"])
+    assert np.isnan(metrics["pinaw_95"])
+
+
 def test_generation_period_metrics_include_0600_through_1800_targets():
     frame = pd.DataFrame(
         {

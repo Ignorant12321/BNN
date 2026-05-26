@@ -3,12 +3,19 @@ include:
 
 model:
   name: mlp_baseline
-  hidden_dim: 128
+  hidden_dims:
+    - 128
+    - 64
 
 training:
   backend: torch
   device: auto
-  epochs: 50
+  epochs: 500
   batch_size: 64
   lr: 0.0005
   weight_decay: 0.0001
+  early_stopping:
+    enabled: true
+    patience: 50
+    min_delta: 0.0
+    metric: val_generation_nrmse

@@ -62,6 +62,7 @@ def train_torch_model(
         model.parameters(),
         lr=float(training.get("lr", 1e-3)),
         weight_decay=float(training.get("weight_decay", 0.0)),
+        foreach=bool(training.get("optimizer_foreach", False)),
     )
     kl_beta = float(training.get("kl_beta", 0.0))
     epoch_history: list[dict[str, float]] = []
@@ -78,10 +79,16 @@ def train_torch_model(
                 "history": history_batch.to(device),
                 "weather": weather.to(device),
                 "direct": direct.to(device),
+                "target": target.to(device),
             }
-            target = target.to(device)
-            mean, log_var = model(batch)
-            loss = gaussian_nll(mean, log_var, target) + kl_beta * model.kl_loss()
+            target = batch["target"]
+            output = model(batch)
+            if getattr(model, "deterministic_predict", False):
+                mean = output
+                loss = torch.mean((target - mean) ** 2)
+            else:
+                mean, log_var = output
+                loss = gaussian_nll(mean, log_var, target) + kl_beta * model.kl_loss()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()

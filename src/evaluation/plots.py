@@ -169,7 +169,7 @@ def prediction_interval_bounds(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     work = work.dropna(subset=["_target_time"])
     work["_mean"] = pd.to_numeric(work["mean"], errors="coerce")
     work["_variance"] = np.exp(pd.to_numeric(work["log_var"], errors="coerce"))
-    work = work.dropna(subset=["_mean", "_variance"])
+    work = work.dropna(subset=["_mean"])
     if work.empty:
         return pd.DataFrame(
             columns=["_target_time", "mean", "std", "lower_90", "upper_90", "lower_95", "upper_95"]
@@ -180,8 +180,12 @@ def prediction_interval_bounds(frame: pd.DataFrame, label: str) -> pd.DataFrame:
         mean_values = group["_mean"].to_numpy(dtype=float)
         variance_values = group["_variance"].to_numpy(dtype=float)
         mean = float(np.mean(mean_values))
-        variance = float(np.mean(variance_values + mean_values**2) - mean**2)
-        std = float(np.sqrt(max(variance, 0.0)))
+        finite_variance = np.isfinite(variance_values)
+        if np.any(finite_variance):
+            variance = float(np.mean(variance_values[finite_variance] + mean_values[finite_variance] ** 2) - mean**2)
+            std = float(np.sqrt(max(variance, 0.0)))
+        else:
+            std = float("nan")
         rows.append(
             {
                 "_target_time": target_time,

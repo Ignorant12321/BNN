@@ -63,7 +63,12 @@ def predict_arrays(model, arrays, config: dict | None = None) -> tuple[np.ndarra
                 "weather": torch.from_numpy(arrays.weather.astype(np.float32)).to(device),
                 "direct": torch.from_numpy(arrays.direct.astype(np.float32)).to(device),
             }
-            mean, log_var = model(batch)
+            output = model(batch)
+            if getattr(model, "deterministic_predict", False):
+                mean = output.detach().cpu().numpy()
+                log_var = np.full_like(mean, np.nan, dtype=np.float32)
+                return mean, log_var
+            mean, log_var = output
         return mean.detach().cpu().numpy(), log_var.detach().cpu().numpy()
     return model(arrays.as_batch())
 

@@ -176,10 +176,16 @@ def test_bnn_tuning_configs_use_fixed_batch_size_and_distinct_4h_study():
     root = Path(__file__).resolve().parents[1]
     main_config = yaml.safe_load((root / "configs" / "tune" / "bnn.yaml").read_text(encoding="utf-8"))
     four_hour_config = yaml.safe_load((root / "configs" / "tune" / "bnn_4h.yaml").read_text(encoding="utf-8"))
+    pv_usibnn_config = yaml.safe_load((root / "configs" / "tune" / "pv_usibnn.yaml").read_text(encoding="utf-8"))
 
     assert main_config["search_space"].get("batch_size") is None
     assert four_hour_config["search_space"].get("batch_size") is None
+    assert pv_usibnn_config["search_space"].get("batch_size") is None
     assert four_hour_config["base_config"] == "../models/bnn/4h.yaml"
     assert four_hour_config["name"] == "bnn_4h_generation_optuna"
     assert four_hour_config["study_name"] == "bnn_4h_generation_optuna"
     assert four_hour_config["metric"] == "val_generation_nrmse"
+    assert pv_usibnn_config["base_config"] == "../models/bnn/pv_usibnn.yaml"
+    assert pv_usibnn_config["name"] == "pv_usibnn_generation_optuna"
+    assert pv_usibnn_config["study_name"] == "pv_usibnn_generation_optuna"
+    assert pv_usibnn_config["metric"] == "val_generation_nrmse"

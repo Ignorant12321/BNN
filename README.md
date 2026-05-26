@@ -33,6 +33,7 @@ configs/
   models/
     bnn/
       bnn.yaml              # improved_bnn 默认配置
+      pv_usibnn.yaml        # 4h 超短期 PV IBNN，使用未来 horizon 外生序列
       0h.yaml               # 不使用 history 序列，只使用未来天气 + 起点前一时刻功率
       1h.yaml               # 只覆盖 lookback=4
       4h.yaml               # 只覆盖 lookback=16
@@ -42,6 +43,7 @@ configs/
     mlp/
       mlp.yaml              # mlp_baseline 默认配置
       24h.yaml
+      plain_4h.yaml         # 普通确定性 MLP，4h 超短期对比配置
     cnn/
       cnn.yaml              # cnn_baseline 默认配置
       24h.yaml
@@ -174,10 +176,17 @@ python -m src.experiments.train --config configs/models/bnn/12h.yaml
 python -m src.experiments.train --config configs/models/bnn/24h.yaml
 ```
 
+训练 4h 超短期 `pv_usibnn`：
+
+```powershell
+python -m src.experiments.train --config configs/models/bnn/pv_usibnn.yaml
+```
+
 训练 24h baseline：
 
 ```powershell
 python -m src.experiments.train --config configs/models/mlp/24h.yaml
+python -m src.experiments.train --config configs/models/mlp/plain_4h.yaml
 python -m src.experiments.train --config configs/models/cnn/24h.yaml
 python -m src.experiments.train --config configs/models/mc_dropout/24h.yaml
 ```
@@ -216,19 +225,23 @@ mae, rmse, nmae, nrmse, picp_90, pinaw_90, picp_95, pinaw_95
 
 ```text
 improved_bnn
+pv_usibnn
 mlp_baseline
 cnn_baseline
 mc_dropout
 ```
 
-当前 `configs/models/*/*.yaml` 都使用 torch 后端。四个模型在 torch 后端是独立结构，不再共用同一个网络：
+当前 `configs/models/*/*.yaml` 都使用 torch 后端。各模型在 torch 后端是独立结构，不再共用同一个网络：
 
 ```text
 improved_bnn : 改进 BNN，包含 BayesianLinear、BayesianConv1d 和 KL loss
-mlp_baseline : 普通 MLP，使用 history + future weather + direct
+pv_usibnn    : 超短期 PV IBNN，使用历史功率、当前功率、未来 horizon 辐照/温度/时间序列
+mlp_baseline : 普通确定性 MLP，展平 history + future weather/time 后直接输出未来功率
 cnn_baseline : 真正 Conv1D baseline，只使用 history 序列
 mc_dropout   : MC Dropout，使用 history + future weather，预测阶段多次 dropout sampling
 ```
+
+`mlp_baseline` 的 torch 版本是普通点预测 MLP，不包含贝叶斯层、卷积层、dropout 采样或方差输出。训练损失使用 MSE；预测 CSV 仍保留 `log_var` 列以兼容统一评估格式，但确定性 MLP 会写入 NaN，因此区间指标 `picp_*` 和 `pinaw_*` 也会是 NaN。
 
 `improved_bnn` 的 torch 结构按表 3 固定，不再用 `hidden_dim`、`branch_dim` 或 `conv_kernel` 调整网络层数/单元数：
 
@@ -253,13 +266,48 @@ mc_dropout   : MC Dropout，使用 history + future weather，预测阶段多次
   -> 输出层 mean / log_var
 ```
 
-如果把 `training.backend` 改成 `numpy`，注册表会构造轻量 ridge regression 版本，用于测试或无 PyTorch 场景。
+`pv_usibnn` 面向 15 分钟粒度的 4h 超短期预测，默认 `lookback: 16`、`horizon: 16`。它保留论文中多分支 IBNN 的思想，但按当前 Plant_1 数据集可用字段落地：
+
+```text
+history_power:
+  AC_POWER[t-lookback+1 : t]
+  -> 1D BayesianConv 分支，kernel=3
+  -> AdaptiveAvgPool1d(4)
+  -> Flatten
+  -> 概率全连接层 32
+
+direct_power:
+  AC_POWER[t]
+  -> 直接进入合并层
+
+future_solar + future_time:
+  IRRADIATION[t+1 : t+horizon]
+  hour_sin/hour_cos/dayofyear_sin/dayofyear_cos/is_generation_time[t+1 : t+horizon]
+  -> 概率全连接层 32
+  -> 概率全连接层 64
+  -> 概率全连接层 16
+
+future_weather:
+  AMBIENT_TEMPERATURE/MODULE_TEMPERATURE[t+1 : t+horizon]
+  -> 概率全连接层 32
+  -> 概率全连接层 16
+
+合并后:
+  -> 概率全连接层 32
+  -> 概率全连接层 16
+  -> 输出层 mean / log_var
+```
+
+`pv_usibnn` 不给历史功率额外增加 FC 分支，历史出力只走 1D 概率卷积分支，以贴近论文表 3；但针对 `lookback: 16` 的 4h 超短期窗口，CNN 使用 `kernel=3`，并池化到 4 个位置后再展平，避免把 16 个历史点压成单个全局平均值。`IRRADIATION` 不放入温度天气分支，而是作为未来太阳辐照序列和时间特征一起编码。当前数据集没有天气类型、气压、湿度、风速、云量、雾霾、能见度等字段，因此模型不会伪造这些输入，也不做 t-SNE。训练损失仍是 Gaussian NLL 加 `kl_beta * model.kl_loss()`；预测阶段因为 `stochastic_predict=True`，会按 `evaluation.n_samples` 做 MC forward，并合并 epistemic 与 aleatoric 方差。
+
+除 `pv_usibnn` 外，如果把 `training.backend` 改成 `numpy`，注册表会构造轻量 ridge regression 版本，用于测试或无 PyTorch 场景。`pv_usibnn` 使用 BayesianConv1d 和 MC sampling，要求 torch 后端。
 
 常调字段：
 
 ```yaml
 model:
-  hidden_dim: 128    # mlp_baseline、cnn_baseline、mc_dropout 使用
+  hidden_dims: [128, 64] # mlp_baseline 使用
+  hidden_dim: 128        # cnn_baseline、mc_dropout 使用
   branch_dim: 64     # cnn_baseline、mc_dropout 使用
   dropout: 0.2       # 仅 mc_dropout 使用
 

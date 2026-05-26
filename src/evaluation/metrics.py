@@ -36,7 +36,13 @@ def regression_metrics(mean: np.ndarray, log_var: np.ndarray, target: np.ndarray
         "nmae": mae / scale,
         "nrmse": rmse / scale,
     }
-    std = np.sqrt(np.exp(log_var[: len(mean)]))
+    log_var = log_var[: len(mean)]
+    if np.isnan(log_var).all():
+        for level in INTERVAL_Z:
+            metrics[f"picp_{level}"] = float("nan")
+            metrics[f"pinaw_{level}"] = float("nan")
+        return metrics
+    std = np.sqrt(np.exp(log_var))
     for level, z_value in INTERVAL_Z.items():
         lower = mean - z_value * std
         upper = mean + z_value * std

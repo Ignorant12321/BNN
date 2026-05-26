@@ -1,0 +1,20 @@
+include:
+  - mlp.yaml
+
+data:
+  lookback: 16
+  horizon: 16
+  features:
+    history:
+      - AC_POWER
+    weather:
+      - IRRADIATION
+      - AMBIENT_TEMPERATURE
+      - MODULE_TEMPERATURE
+      - hour_sin
+      - hour_cos
+      - dayofyear_sin
+      - dayofyear_cos
+      - is_generation_time
+    direct: []
+    target: AC_POWER

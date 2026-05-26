@@ -71,6 +71,136 @@ def test_torch_trainer_reduces_simple_direct_error():
     assert len(arrays_to_torch_dataset(arrays)) == 16
 
 
+def test_mlp_baseline_is_plain_deterministic_model():
+    import torch
+
+    config = {
+        "data": {
+            "lookback": 4,
+            "horizon": 2,
+            "features": {"history": ["h"], "weather": ["w"], "direct": [], "target": "y"},
+        },
+        "model": {"name": "mlp_baseline", "hidden_dims": [8, 4]},
+        "training": {"backend": "torch", "device": "auto"},
+    }
+    model = build_model(config)
+    batch = {
+        "history": torch.ones((3, 4, 1), dtype=torch.float32),
+        "weather": torch.ones((3, 2, 1), dtype=torch.float32),
+        "direct": torch.zeros((3, 0), dtype=torch.float32),
+    }
+
+    output = model(batch)
+
+    assert output.shape == (3, 2)
+    assert getattr(model, "deterministic_predict", False) is True
+    assert not hasattr(model, "log_var_head")
+
+
+def test_torch_trainer_uses_mse_for_deterministic_models():
+    import torch
+    from torch import nn
+
+    class DeterministicTorchModel(nn.Module):
+        is_torch_model = True
+        deterministic_predict = True
+
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(()))
+
+        def forward(self, batch):
+            return batch["direct"] * self.weight
+
+    arrays = WindowArrays(
+        history=np.zeros((8, 1, 1), dtype=np.float32),
+        weather=np.zeros((8, 1, 1), dtype=np.float32),
+        direct=np.arange(8, dtype=np.float32).reshape(8, 1),
+        target=(3 * np.arange(8, dtype=np.float32)).reshape(8, 1),
+    )
+    model = DeterministicTorchModel()
+
+    train_torch_model(
+        model,
+        arrays,
+        {"training": {"device": "cpu", "epochs": 30, "batch_size": 8, "lr": 0.01, "weight_decay": 0.0}},
+    )
+
+    assert float(model.weight.detach()) > 0.0
+
+
+def test_predict_arrays_marks_deterministic_torch_uncertainty_as_nan():
+    config = {
+        "data": {
+            "lookback": 2,
+            "horizon": 2,
+            "features": {"history": ["h"], "weather": ["w"], "direct": [], "target": "y"},
+        },
+        "model": {"name": "mlp_baseline", "hidden_dims": [8, 4]},
+        "training": {"backend": "torch", "device": "auto"},
+    }
+    arrays = WindowArrays(
+        history=np.ones((3, 2, 1), dtype=np.float32),
+        weather=np.ones((3, 2, 1), dtype=np.float32),
+        direct=np.zeros((3, 0), dtype=np.float32),
+        target=np.zeros((3, 2), dtype=np.float32),
+    )
+    model = build_model(config)
+
+    mean, log_var = predict_arrays(model, arrays, config=config)
+
+    assert mean.shape == (3, 2)
+    assert log_var.shape == (3, 2)
+    assert np.isnan(log_var).all()
+
+
+def test_torch_trainer_disables_adam_foreach_by_default(monkeypatch):
+    import torch
+    import src.training.torch_trainer as torch_trainer
+
+    class RecordingAdamW:
+        kwargs = None
+
+        def __init__(self, params, **kwargs):
+            self.params = list(params)
+            RecordingAdamW.kwargs = kwargs
+
+        def zero_grad(self, set_to_none=True):
+            for parameter in self.params:
+                parameter.grad = None
+
+        def step(self):
+            pass
+
+    class SimpleTorchModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bias = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, batch):
+            mean = torch.zeros_like(batch["target"]) + self.bias
+            return mean, torch.zeros_like(mean)
+
+        def kl_loss(self):
+            return self.bias * 0.0
+
+    monkeypatch.setattr(torch_trainer.torch.optim, "AdamW", RecordingAdamW)
+    arrays = WindowArrays(
+        history=np.zeros((2, 1, 1), dtype=np.float32),
+        weather=np.zeros((2, 1, 1), dtype=np.float32),
+        direct=np.zeros((2, 1), dtype=np.float32),
+        target=np.ones((2, 1), dtype=np.float32),
+    )
+
+    train_torch_model(
+        SimpleTorchModel(),
+        arrays,
+        {"training": {"device": "cpu", "epochs": 1, "batch_size": 2, "lr": 0.01}},
+    )
+
+    assert RecordingAdamW.kwargs["foreach"] is False
+
+
 def test_torch_trainer_restores_best_validation_epoch():
     import torch
 
@@ -254,6 +384,59 @@ def test_improved_bnn_supports_zero_lookback_with_weather_and_direct_only():
     assert log_var.shape == (3, 2)
     assert not hasattr(model, "history_fc")
     assert not hasattr(model, "history_conv1")
+    assert float(model.kl_loss().detach().cpu()) > 0.0
+
+
+def test_pv_usibnn_uses_ultra_short_term_branches_and_mc_sampling():
+    config = {
+        "data": {
+            "lookback": 16,
+            "horizon": 16,
+            "features": {
+                "history": ["AC_POWER"],
+                "weather": [
+                    "IRRADIATION",
+                    "AMBIENT_TEMPERATURE",
+                    "MODULE_TEMPERATURE",
+                    "hour_sin",
+                    "hour_cos",
+                    "dayofyear_sin",
+                    "dayofyear_cos",
+                    "is_generation_time",
+                ],
+                "direct": ["AC_POWER"],
+                "target": "AC_POWER",
+            },
+        },
+        "model": {"name": "pv_usibnn"},
+        "training": {"backend": "torch", "device": "auto"},
+        "evaluation": {"n_samples": 3},
+    }
+    model = build_model(config)
+    arrays = WindowArrays(
+        history=np.ones((4, 16, 1), dtype=np.float32),
+        weather=np.ones((4, 16, 8), dtype=np.float32),
+        direct=np.ones((4, 1), dtype=np.float32),
+        target=np.zeros((4, 16), dtype=np.float32),
+    )
+
+    mean, log_var = predict_arrays(model, arrays, config=config)
+
+    assert model.stochastic_predict is True
+    assert model.solar_time_indices == (0, 3, 4, 5, 6, 7)
+    assert model.weather_indices == (1, 2)
+    assert not hasattr(model, "history_fc")
+    assert not hasattr(model, "direct_branch")
+    assert model.history_conv1.kernel_size == 3
+    assert model.history_conv1.out_channels == 32
+    assert model.history_conv2.kernel_size == 3
+    assert model.history_conv2.out_channels == 32
+    assert model.history_pool.output_size == 4
+    assert not hasattr(model, "conv_pool")
+    assert model.history_projection.in_features == 128
+    assert model.fusion[0].in_features == 65
+    assert mean.shape == (4, 16)
+    assert log_var.shape == (4, 16)
     assert float(model.kl_loss().detach().cpu()) > 0.0
 
 

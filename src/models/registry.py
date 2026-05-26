@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from src.data.pv import feature_dimensions_from_config
+from src.data.pv import feature_columns_from_config, feature_dimensions_from_config
 from src.models.baselines import FlattenedMLPBaseline, HistoryCNNBaseline, MCDropoutBaseline
 from src.models.improved_bnn import ImprovedBayesianPVNet
 
@@ -54,6 +54,42 @@ def _build_improved_bnn(config: dict[str, Any]) -> ImprovedBayesianPVNet:
     return ImprovedBayesianPVNet(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
 
+def _build_pv_usibnn(config: dict[str, Any]):
+    if not _torch_backend(config):
+        raise ValueError("pv_usibnn requires training.backend: torch")
+    from src.models.pv_usibnn import PVUltraShortTermIBNN
+
+    data = config["data"]
+    columns = feature_columns_from_config(config)
+    return PVUltraShortTermIBNN(
+        lookback=int(data["lookback"]),
+        horizon=int(data["horizon"]),
+        history_features=len(columns.history),
+        weather_feature_names=columns.weather,
+        direct_features=len(columns.direct),
+    )
+
+
+def _build_pv_usibnn_recursive(config: dict[str, Any]):
+    if not _torch_backend(config):
+        raise ValueError("pv_usibnn_recursive requires training.backend: torch")
+    from src.models.pv_usibnn_recursive import PVRecursiveUltraShortTermIBNN
+
+    data = config["data"]
+    model_config = config.get("model", {})
+    columns = feature_columns_from_config(config)
+    return PVRecursiveUltraShortTermIBNN(
+        lookback=int(data["lookback"]),
+        horizon=int(data["horizon"]),
+        history_features=len(columns.history),
+        weather_feature_names=columns.weather,
+        direct_features=len(columns.direct),
+        hidden_dim=int(model_config.get("hidden_dim", 32)),
+        context_dim=int(model_config.get("context_dim", 32)),
+        teacher_forcing_ratio=float(model_config.get("teacher_forcing_ratio", 0.0)),
+    )
+
+
 def _build_mlp_baseline(config: dict[str, Any]) -> FlattenedMLPBaseline:
     if _torch_backend(config):
         from src.models.torch_models import MLPBaselineTorchNet
@@ -66,6 +102,7 @@ def _build_mlp_baseline(config: dict[str, Any]) -> FlattenedMLPBaseline:
             weather_features=weather_features,
             direct_features=direct_features,
             hidden_dim=int(model_config.get("hidden_dim", 128)),
+            hidden_dims=model_config.get("hidden_dims"),
         )
     return FlattenedMLPBaseline(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
 
@@ -104,6 +141,8 @@ def _build_mc_dropout(config: dict[str, Any]) -> MCDropoutBaseline:
 
 MODEL_REGISTRY: dict[str, ModelBuilder] = {
     "improved_bnn": _build_improved_bnn,
+    "pv_usibnn": _build_pv_usibnn,
+    "pv_usibnn_recursive": _build_pv_usibnn_recursive,
     "mlp_baseline": _build_mlp_baseline,
     "cnn_baseline": _build_cnn_baseline,
     "mc_dropout": _build_mc_dropout,

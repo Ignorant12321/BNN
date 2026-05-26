@@ -1,0 +1,36 @@
+include:
+  - bnn.yaml
+
+model:
+  name: pv_usibnn_recursive
+  hidden_dim: 32
+  context_dim: 32
+  teacher_forcing_ratio: 0.5
+
+data:
+  lookback: 16
+  horizon: 16
+  features:
+    history:
+      - AC_POWER
+    weather:
+      - IRRADIATION
+      - AMBIENT_TEMPERATURE
+      - MODULE_TEMPERATURE
+      - hour_sin
+      - hour_cos
+      - dayofyear_sin
+      - dayofyear_cos
+      - is_generation_time
+    direct:
+      - AC_POWER
+    target: AC_POWER
+
+training:
+  device: cpu
+  batch_size: 32
+  early_stopping:
+    metric: val_generation_nrmse
+
+evaluation:
+  n_samples: 20

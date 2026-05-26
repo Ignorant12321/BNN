@@ -247,3 +247,39 @@ def test_run_training_writes_note_file_from_argument(tmp_path, monkeypatch):
     run_dir = run_training(config, note="first bnn trial")
 
     assert (run_dir / "note.txt").read_text(encoding="utf-8") == "first bnn trial\n"
+
+
+def test_torch_training_batches_include_target_for_recursive_teacher_forcing():
+    torch = pytest.importorskip("torch")
+    from torch import nn
+
+    from src.training.torch_trainer import train_torch_model
+
+    class TargetAwareTorchModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bias = nn.Parameter(torch.tensor(0.0))
+            self.saw_target = False
+
+        def forward(self, batch):
+            assert "target" in batch
+            self.saw_target = True
+            mean = torch.zeros_like(batch["target"]) + self.bias
+            log_var = torch.zeros_like(mean)
+            return mean, log_var
+
+        def kl_loss(self):
+            return self.bias * 0.0
+
+    arrays = WindowArrays(
+        history=np.ones((2, 2, 1), dtype=np.float32),
+        weather=np.ones((2, 1, 1), dtype=np.float32),
+        direct=np.ones((2, 1), dtype=np.float32),
+        target=np.ones((2, 1), dtype=np.float32),
+    )
+    model = TargetAwareTorchModel()
+    config = {"training": {"device": "cpu", "epochs": 1, "batch_size": 2, "lr": 0.01, "kl_beta": 0.0}}
+
+    train_torch_model(model, arrays, config)
+
+    assert model.saw_target

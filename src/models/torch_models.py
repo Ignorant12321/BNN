@@ -2,7 +2,7 @@
 
 功能：
     提供 improved_bnn、mlp_baseline、cnn_baseline、mc_dropout 四套独立
-    PyTorch 模型，接口统一返回 `(mean, log_var)`。
+    PyTorch 模型。概率模型返回 `(mean, log_var)`，普通确定性模型只返回 `mean`。
 
 使用：
     python -m src.experiments.train --config configs/models/bnn/24h.yaml
@@ -204,7 +204,9 @@ class ImprovedBayesianTorchNet(ProbabilisticTorchModel):
 
 
 class MLPBaselineTorchNet(ProbabilisticTorchModel):
-    """普通 MLP baseline，使用全部输入但不包含贝叶斯层或卷积层。"""
+    """普通确定性 MLP baseline，展平全部输入后直接预测未来功率。"""
+
+    deterministic_predict = True
 
     def __init__(
         self,
@@ -214,20 +216,21 @@ class MLPBaselineTorchNet(ProbabilisticTorchModel):
         weather_features: int,
         direct_features: int,
         hidden_dim: int = 128,
+        hidden_dims: list[int] | tuple[int, ...] | None = None,
     ):
         super().__init__()
         self.horizon = int(horizon)
         input_dim = int(lookback) * int(history_features) + int(horizon) * int(weather_features) + int(direct_features)
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
-        self.mean_head = nn.Linear(hidden_dim, horizon)
-        self.log_var_head = nn.Linear(hidden_dim, horizon)
+        layer_dims = tuple(int(value) for value in (hidden_dims or (hidden_dim, max(1, hidden_dim // 2))))
+        layers: list[nn.Module] = []
+        previous_dim = input_dim
+        for current_dim in layer_dims:
+            layers.extend([nn.Linear(previous_dim, current_dim), nn.ReLU()])
+            previous_dim = current_dim
+        self.network = nn.Sequential(*layers)
+        self.output_head = nn.Linear(previous_dim, horizon)
 
-    def forward(self, batch: dict) -> tuple:
+    def forward(self, batch: dict):
         features = torch.cat(
             [
                 batch["history"].reshape(len(batch["history"]), -1),
@@ -237,7 +240,7 @@ class MLPBaselineTorchNet(ProbabilisticTorchModel):
             dim=1,
         )
         z = self.network(features)
-        return self.mean_head(z), torch.clamp(self.log_var_head(z), min=-10.0, max=6.0)
+        return self.output_head(z)
 
 
 class CNNBaselineTorchNet(ProbabilisticTorchModel):

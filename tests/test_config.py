@@ -74,6 +74,7 @@ def test_project_model_configs_use_nested_defaults():
         "configs/models/bnn/12h.yaml": ("improved_bnn", 48),
         "configs/models/bnn/24h.yaml": ("improved_bnn", 96),
         "configs/models/mlp/24h.yaml": ("mlp_baseline", 96),
+        "configs/models/mlp/plain_4h.yaml": ("mlp_baseline", 16),
         "configs/models/cnn/24h.yaml": ("cnn_baseline", 96),
         "configs/models/mc_dropout/24h.yaml": ("mc_dropout", 96),
     }
@@ -104,3 +105,45 @@ def test_bnn_configs_use_irradiation_without_explicit_time_features():
 
     assert four_hour["data"]["features"]["weather"] == expected_weather
     assert day["data"]["features"]["weather"] == expected_weather
+
+
+def test_pv_usibnn_config_defaults_to_four_hour_ultra_short_term_inputs():
+    config = load_config("configs/models/bnn/pv_usibnn.yaml")
+
+    assert config["model"]["name"] == "pv_usibnn"
+    assert config["data"]["lookback"] == 16
+    assert config["data"]["horizon"] == 16
+    assert config["data"]["features"]["history"] == ["AC_POWER"]
+    assert config["data"]["features"]["weather"] == [
+        "IRRADIATION",
+        "AMBIENT_TEMPERATURE",
+        "MODULE_TEMPERATURE",
+        "hour_sin",
+        "hour_cos",
+        "dayofyear_sin",
+        "dayofyear_cos",
+        "is_generation_time",
+    ]
+    assert config["data"]["features"]["direct"] == ["AC_POWER"]
+
+
+def test_plain_mlp_four_hour_config_uses_weather_time_inputs_without_direct_power():
+    config = load_config("configs/models/mlp/plain_4h.yaml")
+
+    assert config["model"]["name"] == "mlp_baseline"
+    assert config["model"]["hidden_dims"] == [128, 64]
+    assert config["data"]["lookback"] == 16
+    assert config["data"]["horizon"] == 16
+    assert config["data"]["features"]["history"] == ["AC_POWER"]
+    assert config["data"]["features"]["weather"] == [
+        "IRRADIATION",
+        "AMBIENT_TEMPERATURE",
+        "MODULE_TEMPERATURE",
+        "hour_sin",
+        "hour_cos",
+        "dayofyear_sin",
+        "dayofyear_cos",
+        "is_generation_time",
+    ]
+    assert config["data"]["features"]["direct"] == []
+    assert config["training"]["early_stopping"]["metric"] == "val_generation_nrmse"

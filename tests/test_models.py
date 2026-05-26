@@ -5,7 +5,14 @@ from src.models.registry import build_model, supported_model_names
 
 
 def test_supported_model_names_are_stable():
-    assert supported_model_names() == ("improved_bnn", "mlp_baseline", "cnn_baseline", "mc_dropout")
+    assert supported_model_names() == (
+        "improved_bnn",
+        "pv_usibnn",
+        "pv_usibnn_recursive",
+        "mlp_baseline",
+        "cnn_baseline",
+        "mc_dropout",
+    )
 
 
 def test_build_model_returns_probabilistic_interface():
@@ -79,3 +86,70 @@ def test_build_model_rejects_unknown_name():
 
     with pytest.raises(ValueError, match="unsupported model.name"):
         build_model(config)
+
+
+def test_recursive_pv_usibnn_rolls_predictions_across_horizon():
+    torch = pytest.importorskip("torch")
+    from src.models.pv_usibnn_recursive import PVRecursiveUltraShortTermIBNN
+
+    model = PVRecursiveUltraShortTermIBNN(
+        lookback=4,
+        horizon=3,
+        history_features=1,
+        weather_feature_names=[
+            "IRRADIATION",
+            "AMBIENT_TEMPERATURE",
+            "MODULE_TEMPERATURE",
+            "hour_sin",
+            "hour_cos",
+            "dayofyear_sin",
+            "dayofyear_cos",
+            "is_generation_time",
+        ],
+        direct_features=1,
+        teacher_forcing_ratio=1.0,
+    )
+    batch = {
+        "history": torch.ones((2, 4, 1), dtype=torch.float32),
+        "weather": torch.ones((2, 3, 8), dtype=torch.float32),
+        "direct": torch.ones((2, 1), dtype=torch.float32),
+        "target": torch.ones((2, 3), dtype=torch.float32),
+    }
+
+    mean, log_var = model(batch)
+
+    assert mean.shape == (2, 3)
+    assert log_var.shape == (2, 3)
+
+
+def test_build_model_returns_recursive_pv_usibnn():
+    pytest.importorskip("torch")
+    from src.models.pv_usibnn_recursive import PVRecursiveUltraShortTermIBNN
+
+    config = {
+        "data": {
+            "lookback": 4,
+            "horizon": 3,
+            "features": {
+                "history": ["AC_POWER"],
+                "weather": [
+                    "IRRADIATION",
+                    "AMBIENT_TEMPERATURE",
+                    "MODULE_TEMPERATURE",
+                    "hour_sin",
+                    "hour_cos",
+                    "dayofyear_sin",
+                    "dayofyear_cos",
+                    "is_generation_time",
+                ],
+                "direct": ["AC_POWER"],
+                "target": "AC_POWER",
+            },
+        },
+        "training": {"backend": "torch"},
+        "model": {"name": "pv_usibnn_recursive", "teacher_forcing_ratio": 0.5},
+    }
+
+    model = build_model(config)
+
+    assert isinstance(model, PVRecursiveUltraShortTermIBNN)
