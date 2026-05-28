@@ -163,6 +163,63 @@ def test_run_tuning_writes_default_note_from_tuning_dir_name(tmp_path: Path, mon
     assert (tmp_path / "outputs" / "tuning" / "default_note" / "note.txt").read_text(encoding="utf-8") == "default_note\n"
 
 
+def test_run_tuning_can_use_recursive_bnn_4h_runner(tmp_path: Path, monkeypatch):
+    base_config_path = tmp_path / "recursive_4h.yaml"
+    base_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "output_dir": str(tmp_path / "outputs"),
+                "data": {
+                    "lookback": 16,
+                    "horizon": 16,
+                    "features": {"history": ["h"], "weather": ["w"], "direct": ["d"], "target": "y"},
+                },
+                "model": {"name": "improved_bnn"},
+                "training": {"backend": "torch", "epochs": 1},
+                "strategy": {"name": "recursive", "train_horizon": 1, "forecast_horizon": 16},
+            }
+        ),
+        encoding="utf-8",
+    )
+    tune_config_path = tmp_path / "tune_recursive.yaml"
+    tune_config_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "unit_recursive_bnn",
+                "base_config": str(base_config_path),
+                "output_dir": str(tmp_path / "outputs"),
+                "runner": "recursive_bnn_4h",
+                "n_trials": 1,
+                "metric": "val_generation_nrmse",
+                "direction": "minimize",
+                "search_space": {"lr": {"type": "categorical", "choices": [0.001]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_run_recursive_training(config, run_dir, note=None):
+        calls.append((config, run_dir, note))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "metrics.csv").write_text(
+            "split,metric,value\nval_generation,nrmse,0.123\n",
+            encoding="utf-8",
+        )
+        return type("Result", (), {"run_dir": run_dir})()
+
+    monkeypatch.setattr(tune_module, "run_recursive_bnn_4h_trial", fake_run_recursive_training)
+
+    result = run_tuning(tune_config_path)
+
+    assert result["best_value"] == 0.123
+    assert len(calls) == 1
+    config, run_dir, note = calls[0]
+    assert config["training"]["lr"] == 0.001
+    assert run_dir == tmp_path / "outputs" / "tuning" / "unit_recursive_bnn" / "runs" / "trial-0000"
+    assert note == "Recursive 4h BNN Optuna trial 0"
+
+
 def test_create_run_dir_honors_explicit_run_dir(tmp_path: Path):
     run_dir = tmp_path / "outputs" / "tuning" / "study" / "runs" / "trial-0000"
 
@@ -176,6 +233,9 @@ def test_bnn_tuning_configs_use_fixed_batch_size_and_distinct_4h_study():
     root = Path(__file__).resolve().parents[1]
     main_config = yaml.safe_load((root / "configs" / "tune" / "bnn.yaml").read_text(encoding="utf-8"))
     four_hour_config = yaml.safe_load((root / "configs" / "tune" / "bnn_4h.yaml").read_text(encoding="utf-8"))
+    recursive_four_hour_config = yaml.safe_load(
+        (root / "configs" / "tune" / "bnn_recursive_4h.yaml").read_text(encoding="utf-8")
+    )
     pv_usibnn_config = yaml.safe_load((root / "configs" / "tune" / "pv_usibnn.yaml").read_text(encoding="utf-8"))
 
     assert main_config["search_space"].get("batch_size") is None
@@ -185,6 +245,11 @@ def test_bnn_tuning_configs_use_fixed_batch_size_and_distinct_4h_study():
     assert four_hour_config["name"] == "bnn_4h_generation_optuna"
     assert four_hour_config["study_name"] == "bnn_4h_generation_optuna"
     assert four_hour_config["metric"] == "val_generation_nrmse"
+    assert recursive_four_hour_config["base_config"] == "../models/bnn/recursive_4h.yaml"
+    assert recursive_four_hour_config["name"] == "bnn_recursive_4h_generation_optuna"
+    assert recursive_four_hour_config["study_name"] == "bnn_recursive_4h_generation_optuna"
+    assert recursive_four_hour_config["runner"] == "recursive_bnn_4h"
+    assert recursive_four_hour_config["metric"] == "val_generation_nrmse"
     assert pv_usibnn_config["base_config"] == "../models/bnn/pv_usibnn.yaml"
     assert pv_usibnn_config["name"] == "pv_usibnn_generation_optuna"
     assert pv_usibnn_config["study_name"] == "pv_usibnn_generation_optuna"

@@ -1,7 +1,7 @@
 """PyTorch 光伏预测模型。
 
 功能：
-    提供 improved_bnn、mlp_baseline、cnn_baseline、mc_dropout 四套独立
+    提供 improved_bnn、mlp_baseline、cnn_baseline、lstm_baseline、mc_dropout 五套独立
     PyTorch 模型。概率模型返回 `(mean, log_var)`，普通确定性模型只返回 `mean`。
 
 使用：
@@ -244,12 +244,17 @@ class MLPBaselineTorchNet(ProbabilisticTorchModel):
 
 
 class CNNBaselineTorchNet(ProbabilisticTorchModel):
-    """真正的一维卷积 baseline，只使用历史功率序列。"""
+    """普通确定性一维卷积 baseline，编码历史序列后融合外生输入。"""
+
+    deterministic_predict = True
 
     def __init__(
         self,
+        lookback: int,
         horizon: int,
         history_features: int,
+        weather_features: int,
+        direct_features: int,
         hidden_dim: int = 128,
         branch_dim: int = 64,
         conv_kernel: int = 5,
@@ -265,19 +270,69 @@ class CNNBaselineTorchNet(ProbabilisticTorchModel):
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
         )
+        exogenous_dim = int(horizon) * int(weather_features) + int(direct_features)
         self.fusion = nn.Sequential(
-            nn.Linear(branch_dim, hidden_dim),
+            nn.Linear(branch_dim + exogenous_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
-        self.mean_head = nn.Linear(hidden_dim, horizon)
-        self.log_var_head = nn.Linear(hidden_dim, horizon)
+        self.output_head = nn.Linear(hidden_dim, horizon)
 
-    def forward(self, batch: dict) -> tuple:
-        features = self.conv(batch["history"].transpose(1, 2))
+    def forward(self, batch: dict):
+        history_features = self.conv(batch["history"].transpose(1, 2))
+        exogenous_features = torch.cat(
+            [
+                batch["weather"].reshape(len(batch["history"]), -1),
+                batch["direct"].reshape(len(batch["history"]), -1),
+            ],
+            dim=1,
+        )
+        features = torch.cat([history_features, exogenous_features], dim=1)
         z = self.fusion(features)
-        return self.mean_head(z), torch.clamp(self.log_var_head(z), min=-10.0, max=6.0)
+        return self.output_head(z)
+
+
+class LSTMBaselineTorchNet(ProbabilisticTorchModel):
+    """普通确定性 LSTM baseline，用历史功率序列预测下一步或多步功率。"""
+
+    deterministic_predict = True
+
+    def __init__(
+        self,
+        horizon: int,
+        history_features: int,
+        weather_features: int,
+        direct_features: int,
+        hidden_dim: int = 128,
+        num_layers: int = 1,
+    ):
+        super().__init__()
+        self.horizon = int(horizon)
+        self.lstm = nn.LSTM(
+            input_size=int(history_features),
+            hidden_size=int(hidden_dim),
+            num_layers=int(num_layers),
+            batch_first=True,
+        )
+        exogenous_dim = int(horizon) * int(weather_features) + int(direct_features)
+        self.fusion = nn.Sequential(
+            nn.Linear(int(hidden_dim) + exogenous_dim, int(hidden_dim)),
+            nn.ReLU(),
+            nn.Linear(int(hidden_dim), horizon),
+        )
+
+    def forward(self, batch: dict):
+        _sequence, (hidden, _cell) = self.lstm(batch["history"])
+        history_features = hidden[-1]
+        exogenous_features = torch.cat(
+            [
+                batch["weather"].reshape(len(batch["history"]), -1),
+                batch["direct"].reshape(len(batch["history"]), -1),
+            ],
+            dim=1,
+        )
+        return self.fusion(torch.cat([history_features, exogenous_features], dim=1))
 
 
 class MCDropoutTorchNet(ProbabilisticTorchModel):

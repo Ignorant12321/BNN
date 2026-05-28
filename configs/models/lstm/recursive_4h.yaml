@@ -1,0 +1,6 @@
+include:
+  - lstm.yaml
+
+data:
+  lookback: 16
+  horizon: 16

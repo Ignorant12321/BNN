@@ -96,6 +96,13 @@ def train_torch_model(
         if batch_losses:
             item = {"epoch": float(epoch_index + 1), "loss": float(np.mean(batch_losses))}
             if validation_arrays is not None:
+                item["val_loss"] = evaluate_torch_validation_loss(
+                    model,
+                    validation_arrays,
+                    device=device,
+                    batch_size=int(training.get("batch_size", 64)),
+                    kl_beta=kl_beta,
+                )
                 val_metrics = evaluate_torch_validation_metrics(model, validation_arrays, device=device, config=config)
                 model.train()
                 item.update(val_metrics)
@@ -116,6 +123,31 @@ def train_torch_model(
         model.load_state_dict(best_state_dict)
         model.to(device)
     return epoch_history
+
+
+def evaluate_torch_validation_loss(model, arrays, device, batch_size: int, kl_beta: float) -> float:
+    """Return mean validation loss using the same objective as training."""
+    model.eval()
+    losses = []
+    loader = DataLoader(arrays_to_torch_dataset(arrays), batch_size=batch_size, shuffle=False)
+    with torch.no_grad():
+        for history_batch, weather, direct, target in loader:
+            batch = {
+                "history": history_batch.to(device),
+                "weather": weather.to(device),
+                "direct": direct.to(device),
+                "target": target.to(device),
+            }
+            target = batch["target"]
+            output = model(batch)
+            if getattr(model, "deterministic_predict", False):
+                mean = output
+                loss = torch.mean((target - mean) ** 2)
+            else:
+                mean, log_var = output
+                loss = gaussian_nll(mean, log_var, target) + kl_beta * model.kl_loss()
+            losses.append(float(loss.detach().cpu()))
+    return float(np.mean(losses)) if losses else float("nan")
 
 
 def early_stopping_patience(training: dict[str, Any]) -> int | None:

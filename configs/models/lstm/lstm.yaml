@@ -2,19 +2,19 @@ include:
   - ../../data.yaml
 
 model:
-  name: improved_bnn
+  name: lstm_baseline
+  hidden_dim: 128
+  num_layers: 1
 
 training:
   backend: torch
   device: auto
-  epochs: 500
+  epochs: 300
   batch_size: 64
   lr: 0.0005
-  kl_beta: 0.000001
+  weight_decay: 0.0001
   early_stopping:
     enabled: true
     patience: 30
     min_delta: 0.0
-
-evaluation:
-  n_samples: 100
+    metric: val_generation_nrmse

@@ -1,0 +1,7 @@
+include:
+  - 4h.yaml
+
+strategy:
+  name: recursive
+  train_horizon: 1
+  forecast_horizon: 16

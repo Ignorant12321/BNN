@@ -1,0 +1,26 @@
+name: bnn_recursive_4h_e150_p15_t30
+base_config: ../models/bnn/recursive_4h.yaml
+output_dir: outputs
+study_name: bnn_recursive_4h_e150_p15_t30
+runner: recursive_bnn_4h
+direction: minimize
+metric: val_generation_nrmse
+n_trials: 30
+
+# Recursive 4h BNN Optuna search.
+# Each trial trains for up to 150 epochs and uses early stopping patience 15.
+search_space:
+  lr:
+    type: log_float
+    low: 0.0001
+    high: 0.001
+  kl_beta:
+    type: log_float
+    low: 0.0000001
+    high: 0.0001
+  training.epochs:
+    type: categorical
+    choices: [150]
+  training.early_stopping.patience:
+    type: categorical
+    choices: [15]

@@ -1,0 +1,21 @@
+name: bnn_recursive_4h_generation_optuna
+base_config: ../models/bnn/recursive_4h.yaml
+output_dir: outputs
+study_name: bnn_recursive_4h_generation_optuna
+runner: recursive_bnn_4h
+direction: minimize
+metric: val_generation_nrmse
+n_trials: 100
+
+# 递推 4h BNN 每个 trial 先训练 one-step BNN，再递推到 4h 预测。
+# batch_size 固定为 BNN 默认配置中的 64；这里只搜索训练超参数。
+# 使用有效发电时段验证集 NRMSE 作为调参目标，避免夜间零功率样本稀释白天误差。
+search_space:
+  lr:
+    type: log_float
+    low: 0.0001
+    high: 0.001
+  kl_beta:
+    type: log_float
+    low: 0.0000001
+    high: 0.0001

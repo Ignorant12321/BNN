@@ -291,6 +291,40 @@ def test_torch_trainer_stops_early_after_validation_patience():
     assert history[-1]["early_stop"] == 1.0
 
 
+def test_torch_training_records_validation_loss():
+    import torch
+
+    class ZeroModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bias = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, batch):
+            template = batch.get("target", batch["direct"])
+            if not isinstance(template, torch.Tensor):
+                template = torch.as_tensor(template, device=self.bias.device)
+            bias = self.bias if "target" in batch else self.bias.detach()
+            mean = bias.expand_as(template)
+            log_var = torch.zeros_like(mean)
+            return mean, log_var
+
+        def kl_loss(self):
+            return torch.zeros((), device=self.bias.device)
+
+    arrays = WindowArrays(
+        history=np.zeros((2, 1, 1), dtype=np.float32),
+        weather=np.zeros((2, 1, 1), dtype=np.float32),
+        direct=np.zeros((2, 1), dtype=np.float32),
+        target=np.zeros((2, 1), dtype=np.float32),
+    )
+    config = {"training": {"device": "auto", "epochs": 1, "batch_size": 2, "lr": 0.0, "kl_beta": 0.0}}
+
+    history = train_torch_model(ZeroModel(), arrays, config, validation_arrays=arrays)
+
+    assert "val_loss" in history[0]
+    assert history[0]["val_loss"] == 0.0
+
+
 def test_early_stopping_monitor_metric_can_use_generation_validation_metric():
     training = {"early_stopping": {"enabled": True, "metric": "val_generation_nrmse"}}
 

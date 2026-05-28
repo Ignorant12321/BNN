@@ -94,7 +94,7 @@ def run_training(config: dict[str, Any], note: str | None = None) -> Path:
     test_predictions.to_csv(predictions_dir / "test.csv", index=False)
     write_prediction_window_pngs([test_predictions], figures_dir)
     write_prediction_window_metrics_csv(test_predictions, figures_dir / "prediction_window_metrics.csv")
-    write_training_loss_png(train_result.epoch_history, metrics, figures_dir / "loss_curve.png")
+    write_training_loss_png(train_result.epoch_history, metrics, figures_dir / "loss_curve.png", best_epoch=train_result.best_epoch)
     model_path = save_model_artifact(model, config, models_dir, stem="best")
     ended_at = datetime.now()
     duration_seconds = time.perf_counter() - started_timer

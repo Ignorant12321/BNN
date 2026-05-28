@@ -1,0 +1,14 @@
+include:
+  - cnn.yaml
+
+data:
+  lookback: 16
+  horizon: 16
+
+training:
+  epochs: 300
+  early_stopping:
+    enabled: true
+    patience: 30
+    min_delta: 0.0
+    metric: val_generation_nrmse

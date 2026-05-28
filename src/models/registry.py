@@ -111,15 +111,34 @@ def _build_cnn_baseline(config: dict[str, Any]) -> HistoryCNNBaseline:
     if _torch_backend(config):
         from src.models.torch_models import CNNBaselineTorchNet
 
-        data, model_config, history_features, _weather_features, _direct_features = _model_dimensions(config)
+        data, model_config, history_features, weather_features, direct_features = _model_dimensions(config)
         return CNNBaselineTorchNet(
+            lookback=int(data["lookback"]),
             horizon=int(data["horizon"]),
             history_features=history_features,
+            weather_features=weather_features,
+            direct_features=direct_features,
             hidden_dim=int(model_config.get("hidden_dim", 128)),
             branch_dim=int(model_config.get("branch_dim", 64)),
             conv_kernel=int(model_config.get("conv_kernel", 5)),
         )
     return HistoryCNNBaseline(horizon=_horizon(config), alpha=float(config.get("model", {}).get("ridge_alpha", 1e-3)))
+
+
+def _build_lstm_baseline(config: dict[str, Any]):
+    if not _torch_backend(config):
+        raise ValueError("lstm_baseline requires training.backend: torch")
+    from src.models.torch_models import LSTMBaselineTorchNet
+
+    data, model_config, history_features, weather_features, direct_features = _model_dimensions(config)
+    return LSTMBaselineTorchNet(
+        horizon=int(data["horizon"]),
+        history_features=history_features,
+        weather_features=weather_features,
+        direct_features=direct_features,
+        hidden_dim=int(model_config.get("hidden_dim", 128)),
+        num_layers=int(model_config.get("num_layers", 1)),
+    )
 
 
 def _build_mc_dropout(config: dict[str, Any]) -> MCDropoutBaseline:
@@ -145,6 +164,7 @@ MODEL_REGISTRY: dict[str, ModelBuilder] = {
     "pv_usibnn_recursive": _build_pv_usibnn_recursive,
     "mlp_baseline": _build_mlp_baseline,
     "cnn_baseline": _build_cnn_baseline,
+    "lstm_baseline": _build_lstm_baseline,
     "mc_dropout": _build_mc_dropout,
 }
 

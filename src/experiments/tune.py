@@ -120,13 +120,36 @@ def make_objective(tune_config: dict[str, Any], tune_config_path: Path, tuning_d
                 "params": params,
             }
         )
-        trial_config["run_dir"] = str(tuning_dir / "runs" / f"trial-{trial.number:04d}")
-        run_dir = run_training(trial_config)
+        run_dir = tuning_dir / "runs" / f"trial-{trial.number:04d}"
+        trial_config["run_dir"] = str(run_dir)
+        run_dir = run_trial_with_config(tune_config, trial_config, run_dir, int(trial.number))
         value = read_metric_from_run(run_dir, metric_name)
         trial.set_user_attr("run_dir", str(run_dir))
         return value
 
     return objective
+
+
+def run_trial_with_config(tune_config: dict[str, Any], trial_config: dict[str, Any], run_dir: Path, trial_number: int) -> Path:
+    """Run one Optuna trial with the configured training runner."""
+    runner = str(tune_config.get("runner", "training"))
+    if runner in {"training", "default"}:
+        return run_training(trial_config)
+    if runner == "recursive_bnn_4h":
+        result = run_recursive_bnn_4h_trial(
+            trial_config,
+            run_dir=run_dir,
+            note=f"Recursive 4h BNN Optuna trial {trial_number}",
+        )
+        return Path(result.run_dir)
+    raise ValueError(f"unsupported tuning runner: {runner}")
+
+
+def run_recursive_bnn_4h_trial(config: dict[str, Any], run_dir: Path, note: str | None = None):
+    """Run one recursive 4h BNN tuning trial."""
+    from src.experiments.train_bnn_recursive_4h import run_recursive_training
+
+    return run_recursive_training(config, run_dir=run_dir, note=note)
 
 
 def print_trial_summary(study, trial, metric_name: str) -> None:

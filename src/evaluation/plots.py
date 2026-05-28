@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from math import isfinite
 from pathlib import Path
 import csv
 import numpy as np
@@ -22,19 +21,32 @@ DEFAULT_PREDICTION_INTERVALS = (("08:00", "12:00"), ("10:00", "14:00"), ("12:00"
 LINE_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2")
 
 
-def write_training_loss_png(epoch_history: list[dict[str, float]], metrics: dict[str, float], path: Path) -> None:
-    """写出单个训练产物的 loss 曲线，并在图中附带训练/验证指标。"""
+def write_training_loss_png(
+    epoch_history: list[dict[str, float]],
+    metrics: dict[str, float],
+    path: Path,
+    best_epoch: int | None = None,
+) -> None:
+    """写出单个训练产物的 loss 曲线。"""
     series = []
     if epoch_history:
         series.append(
             {
-                "label": "loss",
+                "label": "train loss",
                 "color": LINE_COLORS[0],
                 "points": [(float(item["epoch"]), float(item["loss"])) for item in epoch_history],
             }
         )
-    notes = [f"{name}: {value:.4f}" for name, value in metrics.items() if isfinite(float(value))]
-    write_line_png(series, path, title="Training Loss", notes=notes[:10])
+        val_points = [(float(item["epoch"]), float(item["val_loss"])) for item in epoch_history if "val_loss" in item]
+        if val_points:
+            series.append({"label": "val loss", "color": LINE_COLORS[1], "points": val_points})
+    markers = []
+    if best_epoch is not None:
+        markers.append({"x": float(best_epoch), "label": "best epoch", "color": "#16a34a", "linestyle": "--"})
+    early_stop_epoch = first_marked_epoch(epoch_history, "early_stop")
+    if early_stop_epoch is not None:
+        markers.append({"x": early_stop_epoch, "label": "early stop", "color": "#dc2626", "linestyle": ":"})
+    write_line_png(series, path, title="Training Loss", notes=[], markers=markers)
 
 
 def write_comparison_loss_png(histories: list[dict], path: Path) -> None:
@@ -200,7 +212,13 @@ def prediction_interval_bounds(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("_target_time").reset_index(drop=True)
 
 
-def write_line_png(series: list[dict], path: Path, title: str, notes: list[str]) -> None:
+def write_line_png(
+    series: list[dict],
+    path: Path,
+    title: str,
+    notes: list[str],
+    markers: list[dict] | None = None,
+) -> None:
     """通用折线 PNG。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(8.0, 3.8), dpi=140)
@@ -223,6 +241,15 @@ def write_line_png(series: list[dict], path: Path, title: str, notes: list[str])
     ax.set_title(title)
     if has_points:
         ax.grid(True, alpha=0.25)
+        for marker in markers or []:
+            ax.axvline(
+                float(marker["x"]),
+                color=marker.get("color"),
+                linestyle=marker.get("linestyle", "--"),
+                linewidth=1.3,
+                alpha=0.85,
+                label=str(marker.get("label", "")),
+            )
         ax.legend(loc="best", fontsize=8)
         first_x = next(point[0] for item in series for point in item.get("points", []))
         if isinstance(first_x, pd.Timestamp):
@@ -237,6 +264,13 @@ def write_line_png(series: list[dict], path: Path, title: str, notes: list[str])
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def first_marked_epoch(epoch_history: list[dict[str, float]], marker_name: str) -> float | None:
+    for item in epoch_history:
+        if marker_name in item:
+            return float(item["epoch"])
+    return None
 
 
 def _time_to_minutes(value: str) -> int:

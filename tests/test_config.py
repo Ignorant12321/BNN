@@ -70,12 +70,16 @@ def test_project_model_configs_use_nested_defaults():
         "configs/models/bnn/0h.yaml": ("improved_bnn", 0),
         "configs/models/bnn/1h.yaml": ("improved_bnn", 4),
         "configs/models/bnn/4h.yaml": ("improved_bnn", 16),
+        "configs/models/bnn/recursive_4h.yaml": ("improved_bnn", 16),
         "configs/models/bnn/8h.yaml": ("improved_bnn", 32),
         "configs/models/bnn/12h.yaml": ("improved_bnn", 48),
         "configs/models/bnn/24h.yaml": ("improved_bnn", 96),
         "configs/models/mlp/24h.yaml": ("mlp_baseline", 96),
         "configs/models/mlp/plain_4h.yaml": ("mlp_baseline", 16),
+        "configs/models/mlp/recursive_4h.yaml": ("mlp_baseline", 16),
+        "configs/models/cnn/recursive_4h.yaml": ("cnn_baseline", 16),
         "configs/models/cnn/24h.yaml": ("cnn_baseline", 96),
+        "configs/models/lstm/recursive_4h.yaml": ("lstm_baseline", 16),
         "configs/models/mc_dropout/24h.yaml": ("mc_dropout", 96),
     }
 
@@ -92,6 +96,17 @@ def test_project_model_configs_use_nested_defaults():
             assert int(config["training"]["early_stopping"]["patience"]) > 0
             if config_path == "configs/models/bnn/4h.yaml":
                 assert config["training"]["early_stopping"]["metric"] == "val_generation_nrmse"
+
+
+def test_bnn_recursive_four_hour_config_marks_recursive_strategy():
+    config = load_config("configs/models/bnn/recursive_4h.yaml")
+
+    assert config["model"]["name"] == "improved_bnn"
+    assert config["data"]["lookback"] == 16
+    assert config["data"]["horizon"] == 16
+    assert config["strategy"]["name"] == "recursive"
+    assert config["strategy"]["train_horizon"] == 1
+    assert config["strategy"]["forecast_horizon"] == 16
 
 
 def test_bnn_configs_use_irradiation_without_explicit_time_features():
@@ -147,3 +162,22 @@ def test_plain_mlp_four_hour_config_uses_weather_time_inputs_without_direct_powe
     ]
     assert config["data"]["features"]["direct"] == []
     assert config["training"]["early_stopping"]["metric"] == "val_generation_nrmse"
+
+
+def test_recursive_point_baseline_configs_use_same_direct_inputs():
+    for config_path in (
+        "configs/models/mlp/recursive_4h.yaml",
+        "configs/models/cnn/recursive_4h.yaml",
+        "configs/models/lstm/recursive_4h.yaml",
+    ):
+        config = load_config(config_path)
+
+        assert config["data"]["lookback"] == 16
+        assert config["data"]["horizon"] == 16
+        assert config["data"]["features"]["history"] == ["AC_POWER"]
+        assert config["data"]["features"]["weather"] == [
+            "AMBIENT_TEMPERATURE",
+            "MODULE_TEMPERATURE",
+            "IRRADIATION",
+        ]
+        assert config["data"]["features"]["direct"] == ["AC_POWER"]

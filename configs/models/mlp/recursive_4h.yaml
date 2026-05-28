@@ -1,0 +1,13 @@
+include:
+  - mlp.yaml
+
+data:
+  lookback: 16
+  horizon: 16
+
+training:
+  early_stopping:
+    enabled: true
+    patience: 50
+    min_delta: 0.0
+    metric: val_generation_nrmse

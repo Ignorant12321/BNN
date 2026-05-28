@@ -366,10 +366,22 @@ BNN 默认不启用 `weight_decay`，网络结构当前按表 3 固定，`batch_
 python -m src.experiments.tune --config configs/tune/bnn_4h.yaml --note "BNN 4h hyperparameter search"
 ```
 
-4h 调参完成后，最优参数会写在独立目录中：
+递推 4h BNN 使用单独的 runner 调参。每个 trial 会训练 one-step BNN，再递推生成 4h 预测：
+
+```powershell
+python -m src.experiments.tune --config configs/tune/bnn_recursive_4h.yaml --note "Recursive BNN 4h hyperparameter search"
+```
+
+4h 和递推 4h 调参完成后，最优参数会写在各自独立目录中：
 
 ```text
 outputs/tuning/bnn_4h_generation_optuna/
+  tuning_config.yaml
+  best_config.yaml
+  trials.csv
+  runs/trial-0000/
+
+outputs/tuning/bnn_recursive_4h_generation_optuna/
   tuning_config.yaml
   best_config.yaml
   trials.csv
@@ -404,7 +416,7 @@ outputs/tuning/bnn_optuna/
 Remove-Item -Recurse -Force outputs\tuning\bnn_4h_generation_optuna
 ```
 
-然后重新运行 `python -m src.experiments.tune --config configs/tune/bnn_4h.yaml`。4h 调参默认使用 `val_generation_nrmse` 作为目标指标。如果想保留旧结果并新开一组实验，更推荐改 tune YAML 里的 `name` 和 `study_name`，例如 `bnn_4h_generation_optuna_v2`，这样会输出到新的稳定目录。删除 tuning 目录只会删除 Optuna study 和 trial 产物，不会撤销已经写入 `configs/models/bnn/4h.yaml` 的参数；如果要完全从公共默认配置重新搜索，需要先移除 4h 配置中已应用的 `training.lr` 和 `training.kl_beta` 覆盖。
+然后重新运行 `python -m src.experiments.tune --config configs/tune/bnn_4h.yaml`。4h 和递推 4h 调参默认使用 `val_generation_nrmse` 作为目标指标。如果想保留旧结果并新开一组实验，更推荐改 tune YAML 里的 `name` 和 `study_name`，例如 `bnn_4h_generation_optuna_v2`，这样会输出到新的稳定目录。删除 tuning 目录只会删除 Optuna study 和 trial 产物，不会撤销已经写入 `configs/models/bnn/4h.yaml` 的参数；如果要完全从公共默认配置重新搜索，需要先移除 4h 配置中已应用的 `training.lr` 和 `training.kl_beta` 覆盖。
 
 调参 trial 的训练产物不会写到顶层 `outputs/train/`，而是写入当前 tuning 目录下的 `runs/trial-xxxx/`。
 
@@ -418,6 +430,12 @@ python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_optuna --
 
 ```powershell
 python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_4h_generation_optuna --target configs/models/bnn/4h.yaml
+```
+
+递推 4h 独立调参建议写回递推配置：
+
+```powershell
+python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/bnn_recursive_4h_generation_optuna --target configs/models/bnn/recursive_4h.yaml
 ```
 
 命令会展示类似：

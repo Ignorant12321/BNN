@@ -11,6 +11,7 @@ def test_supported_model_names_are_stable():
         "pv_usibnn_recursive",
         "mlp_baseline",
         "cnn_baseline",
+        "lstm_baseline",
         "mc_dropout",
     )
 
@@ -153,3 +154,34 @@ def test_build_model_returns_recursive_pv_usibnn():
     model = build_model(config)
 
     assert isinstance(model, PVRecursiveUltraShortTermIBNN)
+
+
+def test_torch_lstm_baseline_is_deterministic_one_step_model():
+    torch = pytest.importorskip("torch")
+
+    config = {
+        "data": {
+            "lookback": 4,
+            "horizon": 1,
+            "features": {
+                "history": ["AC_POWER"],
+                "weather": ["IRRADIATION", "AMBIENT_TEMPERATURE"],
+                "direct": ["AC_POWER"],
+                "target": "AC_POWER",
+            },
+        },
+        "training": {"backend": "torch"},
+        "model": {"name": "lstm_baseline", "hidden_dim": 8},
+    }
+
+    model = build_model(config)
+    batch = {
+        "history": torch.ones((3, 4, 1), dtype=torch.float32),
+        "weather": torch.ones((3, 1, 2), dtype=torch.float32),
+        "direct": torch.ones((3, 1), dtype=torch.float32),
+    }
+
+    output = model(batch)
+
+    assert getattr(model, "deterministic_predict", False) is True
+    assert output.shape == (3, 1)
