@@ -1,7 +1,12 @@
 include:
-  - 4h.yaml
-
+- 4h.yaml
 strategy:
   name: recursive
   train_horizon: 1
   forecast_horizon: 16
+training:
+  lr: 0.0006611974780375609
+  kl_beta: 3.5932955674062963e-07
+  epochs: 500
+  early_stopping:
+    patience: 30

@@ -169,8 +169,11 @@ def build_coverage_rows(
             {
                 "confidence": int(level),
                 "our_method_picp": interval_coverage(our_predictions, f"lower_{level}", f"upper_{level}"),
+                "our_method_pinaw": interval_pinaw(our_predictions, f"lower_{level}", f"upper_{level}"),
                 "normal_picp": interval_coverage(normal_predictions, f"lower_{level}", f"upper_{level}"),
+                "normal_pinaw": interval_pinaw(normal_predictions, f"lower_{level}", f"upper_{level}"),
                 "persistence_picp": interval_coverage(persistence_predictions, f"lower_{level}", f"upper_{level}"),
+                "persistence_pinaw": interval_pinaw(persistence_predictions, f"lower_{level}", f"upper_{level}"),
             }
         )
     return rows
@@ -187,10 +190,35 @@ def interval_coverage(frame: pd.DataFrame, lower_column: str, upper_column: str)
     return float(covered.mean() * 100.0)
 
 
+def interval_pinaw(frame: pd.DataFrame, lower_column: str, upper_column: str) -> float:
+    """Return prediction interval normalized average width."""
+    target = pd.to_numeric(frame["target"], errors="coerce")
+    lower = pd.to_numeric(frame[lower_column], errors="coerce")
+    upper = pd.to_numeric(frame[upper_column], errors="coerce")
+    valid = target.notna() & lower.notna() & upper.notna()
+    if not valid.any():
+        return float("nan")
+    width = upper[valid] - lower[valid]
+    target_range = float(target[valid].max() - target[valid].min())
+    scale = target_range if target_range > 0.0 else 1.0
+    return float(width.mean() / scale)
+
+
 def write_coverage_summary(path: Path, rows: list[dict[str, float | int]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=["confidence", "our_method_picp", "normal_picp", "persistence_picp"])
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "confidence",
+                "our_method_picp",
+                "our_method_pinaw",
+                "normal_picp",
+                "normal_pinaw",
+                "persistence_picp",
+                "persistence_pinaw",
+            ],
+        )
         writer.writeheader()
         writer.writerows(rows)
 

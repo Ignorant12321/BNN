@@ -86,15 +86,25 @@ def run_recursive_four_hour_experiment(
 ) -> Path:
     """Train the recursive 4h BNN and write a training-style run directory."""
     config = recursive_runtime_config(load_config(config_path), epochs=epochs, n_samples=n_samples)
-    run_dir = make_recursive_train_run_dir(output_dir)
+    run_dir = make_recursive_train_run_dir(output_dir, model_folder=recursive_strategy_model_name(config))
     result = run_recursive_training(config, run_dir=run_dir, note="Recursive 4h BNN strategy")
     return result.run_dir
 
 
-def make_recursive_train_run_dir(output_dir: str | Path = "outputs") -> Path:
+def make_recursive_train_run_dir(output_dir: str | Path = "outputs", model_folder: str = "improved_bnn_recursive") -> Path:
     """Return the canonical training run directory for recursive 4h BNN."""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return Path(output_dir) / "train" / "improved_bnn_recursive" / timestamp
+    return Path(output_dir) / "train" / model_folder / timestamp
+
+
+def recursive_strategy_model_name(config: dict[str, Any]) -> str:
+    """Return the display/output name for a standard recursive strategy run."""
+    model_name = str(config.get("model", {}).get("name", "improved_bnn"))
+    if model_name == "improved_bnn":
+        return "improved_bnn_recursive"
+    if model_name.endswith("_recursive"):
+        return model_name
+    return f"{model_name}_recursive"
 
 
 def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | None = None) -> RecursiveExperimentResult:
@@ -122,7 +132,8 @@ def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | No
     step_config = make_recursive_step_config(config)
     step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
-    print_training_parameters({**step_config, "model": {"name": "improved_bnn_recursive"}}, run_dir, model, started_at, split_sizes)
+    display_model_name = recursive_strategy_model_name(config)
+    print_training_parameters({**step_config, "model": {**step_config.get("model", {}), "name": display_model_name}}, run_dir, model, started_at, split_sizes)
     fit_started_at = datetime.now()
     fit_started_timer = time.perf_counter()
     print_training_process_start(fit_started_at)
@@ -153,7 +164,7 @@ def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | No
     save_manifest(
         build_manifest(
             run_dir=run_dir,
-            config={**config, "model": {"name": "improved_bnn_recursive"}},
+            config={**config, "model": {**config.get("model", {}), "name": display_model_name}},
             started_at=started_at,
             ended_at=ended_at,
             duration_seconds=duration_seconds,

@@ -283,3 +283,27 @@ def test_torch_training_batches_include_target_for_recursive_teacher_forcing():
     train_torch_model(model, arrays, config)
 
     assert model.saw_target
+
+
+def test_run_training_dispatches_recursive_strategy_config(monkeypatch, tmp_path):
+    from src.experiments import train as train_module
+
+    calls = {}
+
+    def fake_recursive_training(config, note=None):
+        calls["config"] = config
+        calls["note"] = note
+        return tmp_path / "recursive-run"
+
+    monkeypatch.setattr(train_module, "run_recursive_strategy_training", fake_recursive_training)
+    config = {
+        "strategy": {"name": "recursive"},
+        "model": {"name": "pv_usibnn_recursive"},
+        "output_dir": str(tmp_path),
+    }
+
+    run_dir = train_module.run_training(config, note="standard recursive")
+
+    assert run_dir == tmp_path / "recursive-run"
+    assert calls["config"] == config
+    assert calls["note"] == "standard recursive"

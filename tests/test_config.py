@@ -142,6 +142,19 @@ def test_pv_usibnn_config_defaults_to_four_hour_ultra_short_term_inputs():
     assert config["data"]["features"]["direct"] == ["AC_POWER"]
 
 
+def test_pv_usibnn_recursive_four_hour_config_uses_standard_recursive_strategy():
+    config = load_config("configs/models/bnn/pv_usibnn_recursive_4h.yaml")
+
+    assert config["model"]["name"] == "pv_usibnn_recursive"
+    assert config["data"]["lookback"] == 16
+    assert config["data"]["horizon"] == 16
+    assert config["strategy"]["name"] == "recursive"
+    assert config["strategy"]["train_horizon"] == 1
+    assert config["strategy"]["forecast_horizon"] == 16
+    assert config["training"]["device"] == "auto"
+    assert config["training"]["batch_size"] == 64
+
+
 def test_plain_mlp_four_hour_config_uses_weather_time_inputs_without_direct_power():
     config = load_config("configs/models/mlp/plain_4h.yaml")
 

@@ -7,6 +7,11 @@ model:
   context_dim: 32
   teacher_forcing_ratio: 0.5
 
+strategy:
+  name: recursive
+  train_horizon: 1
+  forecast_horizon: 16
+
 data:
   lookback: 16
   horizon: 16
@@ -27,10 +32,10 @@ data:
     target: AC_POWER
 
 training:
-  device: cpu
-  batch_size: 32
+  device: auto
+  batch_size: 64
   early_stopping:
     metric: val_generation_nrmse
 
 evaluation:
-  n_samples: 20
+  n_samples: 30

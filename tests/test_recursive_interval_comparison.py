@@ -8,6 +8,7 @@ from src.data.pv import WindowArrays
 from src.experiments.compare_recursive_interval_methods_4h import (
     build_coverage_rows,
     interval_coverage,
+    interval_pinaw,
     normal_residual_intervals,
     persistence_interval_frame,
     write_coverage_summary,
@@ -24,6 +25,18 @@ def test_interval_coverage_reports_percent_inside_interval():
     )
 
     assert interval_coverage(frame, "lower_90", "upper_90") == pytest.approx(75.0)
+
+
+def test_interval_pinaw_reports_normalized_mean_width():
+    frame = pd.DataFrame(
+        {
+            "target": [0.0, 10.0],
+            "lower_90": [1.0, 2.0],
+            "upper_90": [5.0, 8.0],
+        }
+    )
+
+    assert interval_pinaw(frame, "lower_90", "upper_90") == pytest.approx(0.5)
 
 
 def test_normal_residual_intervals_calibrate_by_horizon():
@@ -90,6 +103,9 @@ def test_write_coverage_summary_creates_comparison_csv(tmp_path: Path):
     write_coverage_summary(tmp_path / "coverage_summary.csv", rows)
 
     text = (tmp_path / "coverage_summary.csv").read_text(encoding="utf-8")
-    assert "confidence,our_method_picp,normal_picp,persistence_picp" in text
-    assert "90,100.0,100.0,100.0" in text
-    assert "95,50.0,50.0,50.0" in text
+    assert (
+        "confidence,our_method_picp,our_method_pinaw,normal_picp,normal_pinaw,"
+        "persistence_picp,persistence_pinaw"
+    ) in text
+    assert "90,100.0,2.5,100.0,2.5,100.0,2.5" in text
+    assert "95,50.0,1.5,50.0,1.5,50.0,1.5" in text

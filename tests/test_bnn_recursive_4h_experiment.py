@@ -17,6 +17,19 @@ def test_recursive_train_run_dir_uses_train_model_folder(tmp_path: Path):
     assert run_dir.parent.parent.name == "train"
 
 
+def test_recursive_train_run_dir_can_use_custom_model_folder(tmp_path: Path):
+    run_dir = train_bnn_recursive_4h.make_recursive_train_run_dir(tmp_path, model_folder="pv_usibnn_recursive")
+
+    assert run_dir.parent.name == "pv_usibnn_recursive"
+    assert run_dir.parent.parent.name == "train"
+
+
+def test_recursive_strategy_model_name_preserves_explicit_recursive_model():
+    config = {"model": {"name": "pv_usibnn_recursive"}}
+
+    assert train_bnn_recursive_4h.recursive_strategy_model_name(config) == "pv_usibnn_recursive"
+
+
 def test_recursive_saved_config_keeps_model_loadable_and_records_forecast_horizon():
     forecast_config = {"data": {"horizon": 16}, "strategy": {"name": "recursive"}}
     step_config = {"data": {"horizon": 1}, "model": {"name": "improved_bnn"}}

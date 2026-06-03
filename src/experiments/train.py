@@ -45,6 +45,8 @@ def main() -> None:
 
 def run_training(config: dict[str, Any], note: str | None = None) -> Path:
     """执行一次单模型训练：只用 train split 拟合，并评估 train/val。"""
+    if is_recursive_strategy_config(config):
+        return run_recursive_strategy_training(config, note=note)
     started_at = datetime.now()
     started_timer = time.perf_counter()
     set_random_seed(int(config.get("seed", 42)))
@@ -137,6 +139,24 @@ def run_training(config: dict[str, Any], note: str | None = None) -> Path:
         model_path=model_path,
     )
     return run_dir
+
+
+def is_recursive_strategy_config(config: dict[str, Any]) -> bool:
+    """Return whether this config should use the standard external recursive runner."""
+    return str(config.get("strategy", {}).get("name", "")).lower() == "recursive"
+
+
+def run_recursive_strategy_training(config: dict[str, Any], note: str | None = None) -> Path:
+    """Dispatch recursive strategy configs to the standard one-step rolling trainer."""
+    from src.experiments.train_bnn_recursive_4h import (
+        make_recursive_train_run_dir,
+        recursive_strategy_model_name,
+        run_recursive_training,
+    )
+
+    run_dir = make_recursive_train_run_dir(config.get("output_dir", "outputs"), model_folder=recursive_strategy_model_name(config))
+    result = run_recursive_training(config, run_dir=run_dir, note=note or "Recursive 4h BNN strategy")
+    return result.run_dir
 
 
 def evaluate_model(model, arrays) -> dict[str, float]:
