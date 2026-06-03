@@ -39,7 +39,7 @@ from src.training.trainer import train_model
 
 
 DEFAULT_RECURSIVE_POINT_CONFIGS = (
-    ("BNN", Path("configs/models/bnn/recursive_4h.yaml")),
+    ("BNN", Path("configs/models/bnn/pv_usibnn_recursive_4h.yaml")),
     ("MLP", Path("configs/models/mlp/recursive_4h.yaml")),
     ("1D-CNN", Path("configs/models/cnn/recursive_4h.yaml")),
     ("LSTM", Path("configs/models/lstm/recursive_4h.yaml")),

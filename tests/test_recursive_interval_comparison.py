@@ -7,11 +7,13 @@ import pytest
 from src.data.pv import WindowArrays
 from src.experiments.compare_recursive_interval_methods_4h import (
     build_coverage_rows,
+    build_calibrated_rows,
     interval_coverage,
     interval_pinaw,
     normal_residual_intervals,
     persistence_mean,
     persistence_interval_frame,
+    write_calibrated_summary,
     write_coverage_summary,
 )
 
@@ -143,3 +145,38 @@ def test_write_coverage_summary_creates_comparison_csv(tmp_path: Path):
     ) in text
     assert "90,100.0,2.5,100.0,2.5,100.0,2.5" in text
     assert "95,50.0,1.5,50.0,1.5,50.0,1.5" in text
+
+
+def test_write_calibrated_summary_includes_90_and_95_rows(tmp_path: Path):
+    val = pd.DataFrame(
+        {
+            "target": [0.0, 10.0],
+            "mean": [5.0, 5.0],
+            "lower_90": [4.0, 4.0],
+            "upper_90": [6.0, 6.0],
+            "lower_95": [3.0, 3.0],
+            "upper_95": [7.0, 7.0],
+        }
+    )
+    test = pd.DataFrame(
+        {
+            "target": [0.0, 10.0],
+            "mean": [5.0, 5.0],
+            "lower_90": [4.0, 4.0],
+            "upper_90": [6.0, 6.0],
+            "lower_95": [3.0, 3.0],
+            "upper_95": [7.0, 7.0],
+        }
+    )
+    rows = build_calibrated_rows(
+        {"our_method": val, "normal": val, "persistence": val},
+        {"our_method": test, "normal": test, "persistence": test},
+        levels=(90, 95),
+    )
+
+    write_calibrated_summary(tmp_path / "calibrated_coverage_summary.csv", rows)
+
+    text = (tmp_path / "calibrated_coverage_summary.csv").read_text(encoding="utf-8")
+    assert "confidence,method,val_picp,test_picp,test_pinaw,test_pinaw_percent,test_avg_width,scale" in text
+    assert "90,our_method" in text
+    assert "95,persistence" in text

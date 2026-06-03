@@ -23,6 +23,7 @@ def test_recursive_point_forecast_specs_compare_all_models_recursively():
     specs = recursive_point_forecast_specs()
 
     assert [spec.label for spec in specs] == ["BNN", "MLP", "1D-CNN", "LSTM"]
+    assert specs[0].config_path == Path("configs/models/bnn/pv_usibnn_recursive_4h.yaml")
     assert all(spec.recursive for spec in specs)
 
 

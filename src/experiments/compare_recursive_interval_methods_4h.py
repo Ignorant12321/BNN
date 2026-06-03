@@ -54,9 +54,23 @@ def run_recursive_interval_comparison(run: str | Path, output_dir: str | Path = 
 
     val_predictions = recursive_prediction_frame("Our method", model, model_arrays["val"], config=step_config)
     test_predictions = recursive_prediction_frame("Our method", model, model_arrays["test"], config=step_config)
+    val_normal_predictions = normal_residual_intervals(val_predictions, val_predictions)
     normal_predictions = normal_residual_intervals(val_predictions, test_predictions)
+    val_persistence_predictions = persistence_interval_frame(raw_arrays["val"], raw_arrays["val"])
     persistence_predictions = persistence_interval_frame(raw_arrays["val"], raw_arrays["test"])
     rows = build_coverage_rows(test_predictions, normal_predictions, persistence_predictions)
+    calibrated_rows = build_calibrated_rows(
+        {
+            "our_method": val_predictions,
+            "normal": val_normal_predictions,
+            "persistence": val_persistence_predictions,
+        },
+        {
+            "our_method": test_predictions,
+            "normal": normal_predictions,
+            "persistence": persistence_predictions,
+        },
+    )
 
     compare_dir = create_recursive_interval_comparison_dir(output_dir)
     predictions_dir = compare_dir / "predictions"
@@ -75,6 +89,7 @@ def run_recursive_interval_comparison(run: str | Path, output_dir: str | Path = 
     normal_predictions.to_csv(predictions_dir / "normal_distribution.csv", index=False)
     persistence_predictions.to_csv(predictions_dir / "persistence_interval.csv", index=False)
     write_coverage_summary(compare_dir / "coverage_summary.csv", rows)
+    write_calibrated_summary(compare_dir / "calibrated_coverage_summary.csv", calibrated_rows)
     return compare_dir
 
 
@@ -234,6 +249,75 @@ def interval_pinaw(frame: pd.DataFrame, lower_column: str, upper_column: str) ->
     return float(width.mean() / scale)
 
 
+def build_calibrated_rows(
+    val_frames: dict[str, pd.DataFrame],
+    test_frames: dict[str, pd.DataFrame],
+    levels: tuple[int, ...] = INTERVAL_LEVELS,
+) -> list[dict[str, float | int | str]]:
+    rows: list[dict[str, float | int | str]] = []
+    for level in levels:
+        target_coverage = float(level)
+        for method, val_frame in val_frames.items():
+            test_frame = test_frames[method]
+            scale = calibration_scale_for_picp(val_frame, level, target_coverage)
+            calibrated_val = scaled_interval_frame(val_frame, level, scale)
+            calibrated_test = scaled_interval_frame(test_frame, level, scale)
+            rows.append(
+                {
+                    "confidence": int(level),
+                    "method": method,
+                    "val_picp": interval_coverage(calibrated_val, f"lower_{level}", f"upper_{level}"),
+                    "test_picp": interval_coverage(calibrated_test, f"lower_{level}", f"upper_{level}"),
+                    "test_pinaw": interval_pinaw(calibrated_test, f"lower_{level}", f"upper_{level}"),
+                    "test_pinaw_percent": interval_pinaw(calibrated_test, f"lower_{level}", f"upper_{level}") * 100.0,
+                    "test_avg_width": interval_average_width(calibrated_test, f"lower_{level}", f"upper_{level}"),
+                    "scale": scale,
+                }
+            )
+    return rows
+
+
+def calibration_scale_for_picp(frame: pd.DataFrame, level: int, target_coverage: float) -> float:
+    target = pd.to_numeric(frame["target"], errors="coerce")
+    lower = pd.to_numeric(frame[f"lower_{level}"], errors="coerce")
+    upper = pd.to_numeric(frame[f"upper_{level}"], errors="coerce")
+    valid = target.notna() & lower.notna() & upper.notna()
+    if not valid.any():
+        return float("nan")
+    center = (lower[valid] + upper[valid]) / 2.0
+    half_width = (upper[valid] - lower[valid]) / 2.0
+    target_valid = target[valid]
+    ratios = pd.Series(np.inf, index=target_valid.index, dtype=float)
+    positive_width = half_width > 0.0
+    ratios.loc[positive_width] = ((target_valid[positive_width] - center[positive_width]).abs() / half_width[positive_width]).to_numpy(dtype=float)
+    ratios.loc[(~positive_width) & (target_valid == center)] = 0.0
+    quantile = min(max(float(target_coverage) / 100.0, 0.0), 1.0)
+    return float(max(0.0, np.quantile(ratios.to_numpy(dtype=float), quantile, method="higher")))
+
+
+def scaled_interval_frame(frame: pd.DataFrame, level: int, scale: float) -> pd.DataFrame:
+    result = frame.copy()
+    lower_column = f"lower_{level}"
+    upper_column = f"upper_{level}"
+    lower = pd.to_numeric(result[lower_column], errors="coerce")
+    upper = pd.to_numeric(result[upper_column], errors="coerce")
+    center = (lower + upper) / 2.0
+    half_width = (upper - lower) / 2.0
+    result[lower_column] = center - scale * half_width
+    result[upper_column] = center + scale * half_width
+    return result
+
+
+def interval_average_width(frame: pd.DataFrame, lower_column: str, upper_column: str) -> float:
+    lower = pd.to_numeric(frame[lower_column], errors="coerce")
+    upper = pd.to_numeric(frame[upper_column], errors="coerce")
+    width = upper - lower
+    width = width[np.isfinite(width)]
+    if width.empty:
+        return float("nan")
+    return float(width.mean())
+
+
 def write_coverage_summary(path: Path, rows: list[dict[str, float | int]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as file:
@@ -247,6 +331,26 @@ def write_coverage_summary(path: Path, rows: list[dict[str, float | int]]) -> No
                 "normal_pinaw",
                 "persistence_picp",
                 "persistence_pinaw",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_calibrated_summary(path: Path, rows: list[dict[str, float | int | str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "confidence",
+                "method",
+                "val_picp",
+                "test_picp",
+                "test_pinaw",
+                "test_pinaw_percent",
+                "test_avg_width",
+                "scale",
             ],
         )
         writer.writeheader()
