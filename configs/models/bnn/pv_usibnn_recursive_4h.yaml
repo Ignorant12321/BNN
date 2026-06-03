@@ -1,41 +1,38 @@
 include:
-  - bnn.yaml
-
+- bnn.yaml
 model:
   name: pv_usibnn_recursive
   hidden_dim: 32
   context_dim: 32
   teacher_forcing_ratio: 0.5
-
 strategy:
   name: recursive
   train_horizon: 1
   forecast_horizon: 16
-
 data:
   lookback: 16
   horizon: 16
   features:
     history:
-      - AC_POWER
+    - AC_POWER
     weather:
-      - IRRADIATION
-      - AMBIENT_TEMPERATURE
-      - MODULE_TEMPERATURE
-      - hour_sin
-      - hour_cos
-      - dayofyear_sin
-      - dayofyear_cos
-      - is_generation_time
+    - IRRADIATION
+    - AMBIENT_TEMPERATURE
+    - MODULE_TEMPERATURE
+    - hour_sin
+    - hour_cos
+    - dayofyear_sin
+    - dayofyear_cos
+    - is_generation_time
     direct:
-      - AC_POWER
+    - AC_POWER
     target: AC_POWER
-
 training:
   device: auto
   batch_size: 64
   early_stopping:
     metric: val_generation_nrmse
-
+  lr: 0.0005826016202766788
+  kl_beta: 5.332185425708881e-05
 evaluation:
   n_samples: 30

@@ -7,14 +7,14 @@ model:
 training:
   backend: torch
   device: auto
-  epochs: 150
+  epochs: 300
   batch_size: 64
   lr: 0.0005
   kl_beta: 0.000001
   early_stopping:
     enabled: true
-    patience: 15
+    patience: 30
     min_delta: 0.0
 
 evaluation:
-  n_samples: 30
+  n_samples: 100

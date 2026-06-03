@@ -10,6 +10,7 @@ from src.experiments.compare_recursive_interval_methods_4h import (
     interval_coverage,
     interval_pinaw,
     normal_residual_intervals,
+    persistence_mean,
     persistence_interval_frame,
     write_coverage_summary,
 )
@@ -84,6 +85,39 @@ def test_persistence_interval_frame_uses_direct_power_and_validation_quantiles()
     assert frame.loc[0, "upper_90"] == pytest.approx(21.8)
     assert frame.loc[1, "lower_90"] == pytest.approx(22.2)
     assert frame.loc[1, "upper_90"] == pytest.approx(25.8)
+
+
+def test_persistence_mean_uses_previous_day_same_target_time_when_available():
+    arrays = WindowArrays(
+        history=np.zeros((2, 1, 1), dtype=np.float32),
+        weather=np.zeros((2, 2, 1), dtype=np.float32),
+        direct=np.array([[99.0], [88.0]], dtype=np.float32),
+        target=np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+        target_time=np.array(
+            [
+                ["2020-01-01 08:00:00", "2020-01-01 08:15:00"],
+                ["2020-01-02 08:00:00", "2020-01-02 08:15:00"],
+            ]
+        ),
+    )
+
+    mean = persistence_mean(arrays)
+
+    np.testing.assert_allclose(mean[1], [10.0, 20.0])
+
+
+def test_persistence_mean_falls_back_to_direct_power_without_previous_day_match():
+    arrays = WindowArrays(
+        history=np.zeros((1, 1, 1), dtype=np.float32),
+        weather=np.zeros((1, 2, 1), dtype=np.float32),
+        direct=np.array([[77.0]], dtype=np.float32),
+        target=np.array([[10.0, 20.0]], dtype=np.float32),
+        target_time=np.array([["2020-01-02 08:00:00", "2020-01-02 08:15:00"]]),
+    )
+
+    mean = persistence_mean(arrays)
+
+    np.testing.assert_allclose(mean, [[77.0, 77.0]])
 
 
 def test_write_coverage_summary_creates_comparison_csv(tmp_path: Path):

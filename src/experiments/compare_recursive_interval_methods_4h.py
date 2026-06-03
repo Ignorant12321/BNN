@@ -151,10 +151,40 @@ def persistence_interval_frame(
 
 
 def persistence_mean(arrays: WindowArrays) -> np.ndarray:
-    """Repeat the latest direct AC_POWER input across the forecast horizon."""
+    """Use previous-day same-time power, falling back to latest direct AC_POWER."""
     if arrays.direct.shape[1] < 1:
         raise ValueError("persistence interval method requires at least one direct feature")
-    return np.repeat(arrays.direct[:, :1].astype(float), arrays.target.shape[1], axis=1)
+    fallback = np.repeat(arrays.direct[:, :1].astype(float), arrays.target.shape[1], axis=1)
+    if arrays.target_time is None:
+        return fallback
+    previous_day_lookup = previous_day_target_lookup(arrays)
+    if not previous_day_lookup:
+        return fallback
+    result = fallback.copy()
+    target_times = pd.to_datetime(np.asarray(arrays.target_time).reshape(-1), errors="coerce")
+    for flat_index, target_time in enumerate(target_times):
+        if pd.isna(target_time):
+            continue
+        previous_value = previous_day_lookup.get(target_time - pd.Timedelta(days=1))
+        if previous_value is None:
+            continue
+        sample_index, horizon_index = divmod(flat_index, arrays.target.shape[1])
+        result[sample_index, horizon_index] = previous_value
+    return result
+
+
+def previous_day_target_lookup(arrays: WindowArrays) -> dict[pd.Timestamp, float]:
+    """Map target timestamps to observed target values for day-ahead persistence."""
+    if arrays.target_time is None:
+        return {}
+    target_times = pd.to_datetime(np.asarray(arrays.target_time).reshape(-1), errors="coerce")
+    target_values = np.asarray(arrays.target, dtype=float).reshape(-1)
+    lookup: dict[pd.Timestamp, float] = {}
+    for target_time, target_value in zip(target_times, target_values):
+        if pd.isna(target_time) or not np.isfinite(target_value):
+            continue
+        lookup[target_time] = float(target_value)
+    return lookup
 
 
 def build_coverage_rows(
