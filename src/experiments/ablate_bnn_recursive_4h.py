@@ -10,20 +10,47 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from src.artifacts.manifest import build_manifest
+from src.artifacts.run_io import save_config, save_manifest, save_model_artifact, write_run_note
 from src.config import load_config
-from src.data.pv import DEFAULT_FEATURE_COLUMNS
+from src.data.pv import DEFAULT_FEATURE_COLUMNS, WindowArrays
+from src.data.scaling import (
+    attach_fitted_scaler,
+    fit_window_scaler,
+    should_scale_torch_training,
+    transform_window_arrays_by_split,
+)
 from src.evaluation.metrics import BASE_METRIC_NAMES
+from src.experiments.compare_bnn_strategies_4h import make_recursive_step_config, recursive_prediction_frame, slice_step_arrays
+from src.experiments.train import (
+    load_or_make_split_arrays,
+    print_epoch_progress,
+    print_training_parameters,
+    print_training_process_end,
+    print_training_process_start,
+    set_random_seed,
+    write_epoch_history,
+    write_split_metrics,
+)
 from src.experiments.train_bnn_recursive_4h import (
     DEFAULT_RECURSIVE_BNN_4H_CONFIG,
     RecursiveExperimentResult,
+    recursive_prediction_metrics,
+    recursive_strategy_model_name,
     recursive_runtime_config,
     run_recursive_training,
+    write_recursive_outputs,
 )
+from src.models.registry import build_model
+from src.training.trainer import train_model
 
 
 @dataclass(frozen=True)
@@ -72,7 +99,7 @@ def run_recursive_four_hour_ablation(
     for spec in ABLATIONS:
         config = ablation_config(base_config, spec)
         run_dir = compare_dir / spec.label
-        result = run_recursive_training(config, run_dir=run_dir, note=f"Recursive 4h BNN ablation: {spec.label}")
+        result = run_ablation_training(config, run_dir=run_dir, note=f"Recursive 4h BNN ablation: {spec.label}")
         rows.append(ablation_row(spec.label, result))
 
     write_ablation_metrics(compare_dir / "model_metrics.csv", rows)
@@ -85,11 +112,26 @@ def ablation_config(config: dict[str, Any], spec: AblationSpec) -> dict[str, Any
     result = copy.deepcopy(config)
     result.setdefault("data", {})
     result["data"]["features"] = feature_groups(result)
-    if spec.remove_feature_group is not None:
+    if spec.remove_feature_group is not None and not uses_zero_feature_ablation(result):
         result["data"]["features"][spec.remove_feature_group] = []
     result.setdefault("strategy", {})
     result["strategy"]["ablation"] = spec.label
+    if spec.remove_feature_group is not None and uses_zero_feature_ablation(result):
+        result["strategy"]["zero_feature_group"] = spec.remove_feature_group
     return result
+
+
+def uses_zero_feature_ablation(config: dict[str, Any]) -> bool:
+    """Return whether ablation should preserve feature dimensions and zero inputs."""
+    return str(config.get("model", {}).get("name", "")) == "pv_usibnn_recursive"
+
+
+def run_ablation_training(config: dict[str, Any], run_dir: Path, note: str | None = None) -> RecursiveExperimentResult:
+    """Run one ablation with model-compatible feature handling."""
+    zero_group = config.get("strategy", {}).get("zero_feature_group")
+    if zero_group is None:
+        return run_recursive_training(config, run_dir=run_dir, note=note)
+    return run_zero_feature_recursive_training(config, run_dir=run_dir, zero_group=str(zero_group), note=note)
 
 
 def feature_groups(config: dict[str, Any]) -> dict[str, Any]:
@@ -103,10 +145,95 @@ def feature_groups(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def run_zero_feature_recursive_training(
+    config: dict[str, Any],
+    run_dir: Path,
+    zero_group: str,
+    note: str | None = None,
+) -> RecursiveExperimentResult:
+    """Train a recursive model after zeroing one input feature group."""
+    started_at = datetime.now()
+    started_timer = time.perf_counter()
+    set_random_seed(int(config.get("seed", 42)))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "figures").mkdir(parents=True, exist_ok=True)
+    (run_dir / "predictions").mkdir(parents=True, exist_ok=True)
+    write_run_note(run_dir, note)
+
+    arrays_by_split = load_or_make_split_arrays(config)
+    arrays_by_split = {name: zero_feature_group_arrays(arrays, zero_group) for name, arrays in arrays_by_split.items()}
+    model_probe = build_model(config)
+    if getattr(model_probe, "is_torch_model", False) and should_scale_torch_training(config):
+        scaler = fit_window_scaler(arrays_by_split)
+        config = attach_fitted_scaler(config, scaler)
+        arrays_by_split = transform_window_arrays_by_split(arrays_by_split, scaler)
+    split_sizes = {split_name: len(arrays.target) for split_name, arrays in arrays_by_split.items()}
+
+    step_config = make_recursive_step_config(config)
+    step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
+    model = build_model(step_config)
+    display_model_name = recursive_strategy_model_name(config)
+    print_training_parameters({**step_config, "model": {**step_config.get("model", {}), "name": display_model_name}}, run_dir, model, started_at, split_sizes)
+    fit_started_at = datetime.now()
+    fit_started_timer = time.perf_counter()
+    print_training_process_start(fit_started_at)
+    train_result = train_model(model, step_arrays, step_config, epoch_callback=print_epoch_progress)
+    fit_ended_at = datetime.now()
+    print_training_process_end(fit_ended_at, time.perf_counter() - fit_started_timer, train_result.epoch_history)
+
+    val_predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["val"], config=step_config)
+    predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
+    metrics = dict(train_result.metrics)
+    metrics.update(recursive_prediction_metrics("val", val_predictions))
+    metrics.update(recursive_prediction_metrics("test", predictions))
+
+    model_path = save_model_artifact(model, step_config, models_dir, stem="best")
+    result = RecursiveExperimentResult(
+        run_dir=run_dir,
+        metrics=metrics,
+        predictions=predictions,
+        epoch_history=train_result.epoch_history,
+        model_path=model_path,
+        best_epoch=train_result.best_epoch,
+        duration_seconds=time.perf_counter() - started_timer,
+    )
+    write_recursive_outputs(run_dir, result)
+    save_config(step_config, run_dir / "config.yaml")
+    save_manifest(
+        build_manifest(
+            run_dir=run_dir,
+            config={**config, "model": {**config.get("model", {}), "name": display_model_name}},
+            started_at=started_at,
+            ended_at=datetime.now(),
+            duration_seconds=result.duration_seconds,
+            split_sizes=split_sizes,
+            model_path=model_path,
+            best_epoch=train_result.best_epoch,
+        ),
+        run_dir / "manifest.json",
+    )
+    write_epoch_history(run_dir / "epoch_history.csv", result.epoch_history)
+    write_split_metrics(run_dir / "metrics.csv", result.metrics)
+    return result
+
+
+def zero_feature_group_arrays(arrays: WindowArrays, group: str) -> WindowArrays:
+    """Return arrays with one input group zeroed while preserving model input shapes."""
+    return WindowArrays(
+        history=np.zeros_like(arrays.history) if group == "history" else arrays.history,
+        weather=np.zeros_like(arrays.weather) if group == "weather" else arrays.weather,
+        direct=np.zeros_like(arrays.direct) if group == "direct" else arrays.direct,
+        target=arrays.target,
+        target_time=arrays.target_time,
+    )
+
+
 def ablation_row(label: str, result: RecursiveExperimentResult) -> dict[str, str]:
     row = {
         "label": label,
-        "model": "improved_bnn_recursive",
+        "model": "recursive",
         "run_dir": str(result.run_dir),
         "duration_seconds": f"{result.duration_seconds:.3f}",
     }
