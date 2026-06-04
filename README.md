@@ -207,6 +207,8 @@ MLP    -> configs/models/mlp/recursive_4h.yaml
 LSTM   -> configs/models/lstm/recursive_4h.yaml
 ```
 
+上述点预测 baseline 与 `pv_usibnn_recursive_4h` 使用相同的历史功率、未来气象/时间特征和 direct 功率输入；MLP、1D-CNN、LSTM 均采用 32 维小容量配置，避免由 64/128 隐藏维度带来的容量差异。
+
 点预测对比只输出点预测指标，不比较区间指标：
 
 ```text
@@ -260,16 +262,17 @@ python -m src.experiments.compare_recursive_point_forecasts_4h --epochs 50 --n-s
 
 ```text
 MLP:
-  全部输入展平 -> 全连接网络
+  历史功率 + 未来气象/时间特征 + direct -> 展平
+  32/32 全连接网络
 
 1D-CNN:
   历史功率序列 -> 普通 1D-CNN
-  未来气象 + direct -> 展平
+  未来气象/时间特征 + direct -> 展平
   拼接后 FC 融合
 
 LSTM:
   历史功率序列 -> LSTM
-  未来气象 + direct -> 展平
+  未来气象/时间特征 + direct -> 展平
   拼接后 FC 融合
 
 改进 BNN:

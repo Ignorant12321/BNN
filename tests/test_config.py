@@ -178,6 +178,9 @@ def test_plain_mlp_four_hour_config_uses_weather_time_inputs_without_direct_powe
 
 
 def test_recursive_point_baseline_configs_use_same_direct_inputs():
+    reference = load_config("configs/models/bnn/pv_usibnn_recursive_4h.yaml")
+    expected_weather = reference["data"]["features"]["weather"]
+
     for config_path in (
         "configs/models/mlp/recursive_4h.yaml",
         "configs/models/cnn/recursive_4h.yaml",
@@ -188,9 +191,16 @@ def test_recursive_point_baseline_configs_use_same_direct_inputs():
         assert config["data"]["lookback"] == 16
         assert config["data"]["horizon"] == 16
         assert config["data"]["features"]["history"] == ["AC_POWER"]
-        assert config["data"]["features"]["weather"] == [
-            "AMBIENT_TEMPERATURE",
-            "MODULE_TEMPERATURE",
-            "IRRADIATION",
-        ]
+        assert config["data"]["features"]["weather"] == expected_weather
         assert config["data"]["features"]["direct"] == ["AC_POWER"]
+
+
+def test_recursive_point_baseline_configs_use_small_capacity():
+    mlp = load_config("configs/models/mlp/recursive_4h.yaml")
+    cnn = load_config("configs/models/cnn/recursive_4h.yaml")
+    lstm = load_config("configs/models/lstm/recursive_4h.yaml")
+
+    assert mlp["model"]["hidden_dims"] == [32, 32]
+    assert cnn["model"]["hidden_dim"] == 32
+    assert cnn["model"]["branch_dim"] == 32
+    assert lstm["model"]["hidden_dim"] == 32
