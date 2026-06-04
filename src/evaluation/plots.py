@@ -70,13 +70,14 @@ def write_prediction_window_pngs(
     prediction_frames: list[pd.DataFrame],
     figures_dir: Path,
     intervals: tuple[tuple[str, str], ...] = DEFAULT_PREDICTION_INTERVALS,
+    show_intervals: bool = True,
 ) -> None:
     """按固定时段写出测试集某一天的真实值/预测值曲线。"""
     figures_dir.mkdir(parents=True, exist_ok=True)
     combined = pd.concat(prediction_frames, ignore_index=True) if prediction_frames else pd.DataFrame()
     for start, end in intervals:
         path = figures_dir / f"prediction_{_interval_slug(start)}_{_interval_slug(end)}.png"
-        write_prediction_window_png(combined, path, start, end)
+        write_prediction_window_png(combined, path, start, end, show_intervals=show_intervals)
 
 
 def write_prediction_window_metrics_csv(
@@ -109,7 +110,13 @@ def prediction_window_metrics(frame: pd.DataFrame, start: str, end: str) -> dict
     return {name: metrics[name] for name in BASE_METRIC_NAMES}
 
 
-def write_prediction_window_png(frame: pd.DataFrame, path: Path, start: str, end: str) -> None:
+def write_prediction_window_png(
+    frame: pd.DataFrame,
+    path: Path,
+    start: str,
+    end: str,
+    show_intervals: bool = True,
+) -> None:
     """写出一个时间段的预测曲线。"""
     title = f"Prediction {start}-{end}"
     if frame.empty or "target_time" not in frame.columns:
@@ -139,7 +146,7 @@ def write_prediction_window_png(frame: pd.DataFrame, path: Path, start: str, end
                 "label": label,
                 "color": ax_color,
                 "points": [(row["_target_time"], float(row["mean"])) for _, row in predicted.iterrows()],
-                "intervals": predicted,
+                "intervals": predicted if show_intervals else None,
             }
         )
     date_note = str(subset["_target_time"].dt.date.iloc[0])
@@ -234,12 +241,31 @@ def write_line_png(
         if isinstance(intervals, pd.DataFrame) and not intervals.empty:
             interval_x = intervals["_target_time"]
             color = item.get("color")
-            ax.fill_between(interval_x, intervals["lower_95"], intervals["upper_95"], color=color, alpha=0.10, linewidth=0)
-            ax.fill_between(interval_x, intervals["lower_90"], intervals["upper_90"], color=color, alpha=0.18, linewidth=0)
+            label = str(item.get("label", "series"))
+            ax.fill_between(
+                interval_x,
+                intervals["lower_95"],
+                intervals["upper_95"],
+                color=color,
+                alpha=0.10,
+                linewidth=0,
+                label=f"{label} 95% interval",
+            )
+            ax.fill_between(
+                interval_x,
+                intervals["lower_90"],
+                intervals["upper_90"],
+                color=color,
+                alpha=0.18,
+                linewidth=0,
+                label=f"{label} 90% interval",
+            )
         ax.plot(x_values, y_values, label=str(item.get("label", "series")), color=item.get("color"), linewidth=1.8)
 
     ax.set_title(title)
     if has_points:
+        ax.set_xlabel("Time")
+        ax.set_ylabel("AC Power (kW)")
         ax.grid(True, alpha=0.25)
         for marker in markers or []:
             ax.axvline(

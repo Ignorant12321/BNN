@@ -116,10 +116,15 @@ def run_recursive_point_forecast_comparison(
     write_run_note(compare_dir, "Recursive 4h point forecast comparison")
 
     specs = recursive_point_forecast_specs(configs)
-    runs = [
-        run_recursive_point_forecast(spec, compare_dir / "runs" / safe_filename(spec.label), epochs=epochs, n_samples=n_samples)
-        for spec in specs
-    ]
+    print("Recursive 4h Point Forecast Comparison", flush=True)
+    print("-" * 48, flush=True)
+    runs = []
+    for spec in specs:
+        run_dir = compare_dir / "runs" / safe_filename(spec.label)
+        print(f"Running {spec.label}: {spec.config_path}", flush=True)
+        run = run_recursive_point_forecast(spec, run_dir, epochs=epochs, n_samples=n_samples)
+        print(f"Finished {spec.label}: {run_dir}", flush=True)
+        runs.append(run)
     compare_config = {
         "name": "recursive_point_forecasts_4h",
         "output_dir": str(output_dir),
@@ -130,6 +135,7 @@ def run_recursive_point_forecast_comparison(
     if n_samples is not None:
         compare_config["n_samples"] = int(n_samples)
     write_point_forecast_artifacts(compare_dir, runs, compare_config=compare_config)
+    print(f"Output: {compare_dir}", flush=True)
     return compare_dir
 
 
@@ -222,7 +228,7 @@ def write_point_forecast_artifacts(compare_dir: Path, runs: list[RecursivePointF
     write_metrics_csv(compare_dir / "model_metrics.csv", rows)
     write_markdown_summary(compare_dir / "summary.md", rows)
     write_metric_pngs(rows, figures_dir)
-    write_prediction_window_pngs(frames, figures_dir)
+    write_prediction_window_pngs(frames, figures_dir, show_intervals=False)
     if frames:
         write_prediction_window_metrics_csv(pd.concat(frames, ignore_index=True), figures_dir / "prediction_window_metrics.csv")
     write_comparison_loss_png(histories, figures_dir / "loss_curves.png")
