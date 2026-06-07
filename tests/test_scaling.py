@@ -21,11 +21,33 @@ def test_window_scaler_fits_train_split_only_and_restores_target_predictions():
     scaler = fit_window_scaler({"train": train, "val": val})
     transformed = transform_window_arrays_by_split({"train": train, "val": val}, scaler)
 
-    assert scaler["target"]["mean"] == 250.0
-    assert scaler["target"]["std"] == np.std(train.target)
-    np.testing.assert_allclose(np.mean(transformed["train"].target), 0.0, atol=1e-6)
-    np.testing.assert_allclose(np.std(transformed["train"].target), 1.0, atol=1e-6)
-    np.testing.assert_allclose(transformed["val"].target, (val.target - 250.0) / np.std(train.target))
+    train_power = np.concatenate(
+        [
+            train.history.reshape(-1),
+            train.direct.reshape(-1),
+            train.target.reshape(-1),
+        ]
+    )
+    expected_power_mean = float(np.mean(train_power))
+    expected_power_std = float(np.std(train_power))
+    assert scaler["target"]["mean"] == expected_power_mean
+    assert scaler["target"]["std"] == expected_power_std
+    assert scaler["history"]["mean"] == [expected_power_mean]
+    assert scaler["history"]["std"] == [expected_power_std]
+    assert scaler["direct"]["mean"] == [expected_power_mean]
+    assert scaler["direct"]["std"] == [expected_power_std]
+    transformed_train_power = np.concatenate(
+        [
+            transformed["train"].history.reshape(-1),
+            transformed["train"].direct.reshape(-1),
+            transformed["train"].target.reshape(-1),
+        ]
+    )
+    np.testing.assert_allclose(np.mean(transformed_train_power), 0.0, atol=1e-6)
+    np.testing.assert_allclose(np.std(transformed_train_power), 1.0, atol=1e-6)
+    np.testing.assert_allclose(transformed["val"].target, (val.target - expected_power_mean) / expected_power_std)
+    np.testing.assert_allclose(transformed["val"].history, (val.history - expected_power_mean) / expected_power_std)
+    np.testing.assert_allclose(transformed["val"].direct, (val.direct - expected_power_mean) / expected_power_std)
 
     restored_mean, restored_log_var = inverse_target_prediction(
         transformed["val"].target,
@@ -34,7 +56,7 @@ def test_window_scaler_fits_train_split_only_and_restores_target_predictions():
     )
 
     np.testing.assert_allclose(restored_mean, val.target)
-    np.testing.assert_allclose(np.exp(restored_log_var), np.ones_like(val.target) * np.std(train.target) ** 2, rtol=1e-5)
+    np.testing.assert_allclose(np.exp(restored_log_var), np.ones_like(val.target) * expected_power_std**2, rtol=1e-5)
 
 
 def test_window_scaler_handles_empty_history_features():

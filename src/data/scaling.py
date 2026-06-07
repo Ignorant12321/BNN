@@ -16,12 +16,14 @@ ScalerPayload = dict[str, dict[str, Any]]
 def fit_window_scaler(arrays_by_split: dict[str, WindowArrays]) -> ScalerPayload:
     """Fit standard scalers from the train split only."""
     train = arrays_by_split["train"]
+    power_scaler = _fit_power_scaler(train)
     return {
         "method": {"name": "standard"},
-        "history": _fit_feature_scaler(train.history),
+        "power": power_scaler,
+        "history": _feature_or_power_scaler(train.history, power_scaler),
         "weather": _fit_feature_scaler(train.weather),
-        "direct": _fit_feature_scaler(train.direct),
-        "target": _fit_scalar_scaler(train.target),
+        "direct": _feature_or_power_scaler(train.direct, power_scaler),
+        "target": power_scaler,
     }
 
 
@@ -107,6 +109,21 @@ def _fit_scalar_scaler(values: np.ndarray) -> dict[str, Any]:
     mean = float(np.mean(values))
     std = float(_safe_std(np.asarray(np.std(values), dtype=np.float32)))
     return {"mean": mean, "std": std}
+
+
+def _fit_power_scaler(train: WindowArrays) -> dict[str, Any]:
+    values = [train.target.reshape(-1)]
+    if train.history.shape[-1] == 1:
+        values.append(train.history.reshape(-1))
+    if train.direct.shape[-1] == 1:
+        values.append(train.direct.reshape(-1))
+    return _fit_scalar_scaler(np.concatenate(values))
+
+
+def _feature_or_power_scaler(values: np.ndarray, power_scaler: dict[str, Any]) -> dict[str, Any]:
+    if values.shape[-1] == 1:
+        return {"mean": [float(power_scaler["mean"])], "std": [float(power_scaler["std"])]}
+    return _fit_feature_scaler(values)
 
 
 def _transform_feature_array(values: np.ndarray, scaler: dict[str, Any]) -> np.ndarray:
