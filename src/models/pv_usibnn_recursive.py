@@ -18,6 +18,7 @@ class PVRecursiveUltraShortTermIBNN(ProbabilisticTorchModel):
     """Bayesian PV model with rolling-history recursive decoding."""
 
     stochastic_predict = True
+    sample_recursive_trajectory = True
     REQUIRED_WEATHER_FEATURES = (
         "IRRADIATION",
         "AMBIENT_TEMPERATURE",
@@ -95,19 +96,8 @@ class PVRecursiveUltraShortTermIBNN(ProbabilisticTorchModel):
         previous_power = batch["direct"][:, :1]
 
         for horizon_index in range(self.horizon):
-            history_features = self._encode_history(rolling_history)
             step_weather = weather[:, horizon_index, self.weather_indices]
-            step_features = torch.cat(
-                [
-                    history_features,
-                    self.weather_branch(step_weather),
-                    previous_power,
-                ],
-                dim=1,
-            )
-            z = self.step_fusion(step_features)
-            step_mean = self.mean_head(z)
-            step_log_var = torch.clamp(self.log_var_head(z), min=-10.0, max=6.0)
+            step_mean, step_log_var = self.forward_step(rolling_history, step_weather, previous_power)
             means.append(step_mean)
             log_vars.append(step_log_var)
 
@@ -116,6 +106,21 @@ class PVRecursiveUltraShortTermIBNN(ProbabilisticTorchModel):
             previous_power = next_power
 
         return torch.cat(means, dim=1), torch.cat(log_vars, dim=1)
+
+    def forward_step(self, rolling_history, step_weather, previous_power):
+        history_features = self._encode_history(rolling_history)
+        step_features = torch.cat(
+            [
+                history_features,
+                self.weather_branch(step_weather),
+                previous_power,
+            ],
+            dim=1,
+        )
+        z = self.step_fusion(step_features)
+        step_mean = self.mean_head(z)
+        step_log_var = torch.clamp(self.log_var_head(z), min=-10.0, max=6.0)
+        return step_mean, step_log_var
 
     def _encode_history(self, rolling_history):
         features = rolling_history.transpose(1, 2)

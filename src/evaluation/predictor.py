@@ -77,6 +77,8 @@ def predict_torch_samples(model, arrays, device, n_samples: int) -> tuple[np.nda
     """多次随机 forward，合并 aleatoric 与 epistemic 不确定性。"""
     torch = import_torch()
     was_training = model.training
+    if getattr(model, "sample_recursive_trajectory", False):
+        return predict_torch_recursive_trajectory_samples(model, arrays, device, n_samples, was_training)
     means = []
     variances = []
     model.train()
@@ -96,5 +98,40 @@ def predict_torch_samples(model, arrays, device, n_samples: int) -> tuple[np.nda
     variance_stack = np.stack(variances, axis=0)
     mean = np.mean(mean_stack, axis=0)
     total_variance = np.mean(variance_stack + mean_stack**2, axis=0) - mean**2
+    log_var = np.log(np.maximum(total_variance, 1e-8))
+    return mean.astype(np.float32), log_var.astype(np.float32)
+
+
+def predict_torch_recursive_trajectory_samples(model, arrays, device, n_samples: int, was_training: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Sample full recursive trajectories and aggregate their empirical distribution."""
+    torch = import_torch()
+    trajectory_samples = []
+    model.train()
+    with torch.no_grad():
+        history = torch.from_numpy(arrays.history.astype(np.float32)).to(device)
+        weather = torch.from_numpy(arrays.weather.astype(np.float32)).to(device)
+        direct = torch.from_numpy(arrays.direct.astype(np.float32)).to(device)
+        horizon = int(getattr(model, "horizon", weather.shape[1]))
+        weather_indices = getattr(model, "weather_indices", None)
+        for _ in range(int(n_samples)):
+            rolling_history = history.clone()
+            previous_power = direct[:, :1].clone()
+            steps = []
+            for horizon_index in range(horizon):
+                step_weather = weather[:, horizon_index]
+                if weather_indices is not None:
+                    step_weather = step_weather[:, weather_indices]
+                step_mean, step_log_var = model.forward_step(rolling_history, step_weather, previous_power)
+                step_std = torch.exp(0.5 * step_log_var)
+                sampled_power = step_mean + torch.randn_like(step_mean) * step_std
+                steps.append(sampled_power)
+                rolling_history = torch.cat([rolling_history[:, 1:, :], sampled_power.unsqueeze(-1)], dim=1)
+                previous_power = sampled_power
+            trajectory_samples.append(torch.cat(steps, dim=1).detach().cpu().numpy())
+    if not was_training:
+        model.eval()
+    sample_stack = np.stack(trajectory_samples, axis=0)
+    mean = np.mean(sample_stack, axis=0)
+    total_variance = np.var(sample_stack, axis=0)
     log_var = np.log(np.maximum(total_variance, 1e-8))
     return mean.astype(np.float32), log_var.astype(np.float32)

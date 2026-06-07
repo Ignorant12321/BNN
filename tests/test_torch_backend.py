@@ -363,6 +363,45 @@ def test_evaluate_torch_model_uses_mc_samples_for_stochastic_models():
     assert model.calls == 3
 
 
+def test_predict_arrays_samples_recursive_trajectory_outputs():
+    import torch
+
+    class RecursiveGaussianModel(torch.nn.Module):
+        is_torch_model = True
+        stochastic_predict = True
+        sample_recursive_trajectory = True
+
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+            self.horizon = 2
+            self.observed_roll_values = []
+
+        def forward_step(self, rolling_history, weather_step, previous_power):
+            self.observed_roll_values.append(float(previous_power.detach().cpu()[0, 0]))
+            mean = previous_power + 1.0
+            log_var = torch.zeros_like(mean)
+            return mean, log_var
+
+    arrays = WindowArrays(
+        history=np.zeros((1, 2, 1), dtype=np.float32),
+        weather=np.zeros((1, 2, 1), dtype=np.float32),
+        direct=np.zeros((1, 1), dtype=np.float32),
+        target=np.zeros((1, 2), dtype=np.float32),
+    )
+    model = RecursiveGaussianModel()
+
+    torch.manual_seed(0)
+    mean, log_var = predict_arrays(model, arrays, config={"evaluation": {"n_samples": 2}})
+
+    assert mean.shape == (1, 2)
+    assert log_var.shape == (1, 2)
+    assert model.observed_roll_values[0] == 0.0
+    assert model.observed_roll_values[2] == 0.0
+    assert model.observed_roll_values[1] != 1.0
+    assert model.observed_roll_values[3] != 1.0
+
+
 def test_improved_bnn_matches_tab3_fixed_structure():
     config = {
         "data": {

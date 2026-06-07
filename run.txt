@@ -1,5 +1,16 @@
+数据预处理（第一次跑需要）：
+python -m src.data.preprocess --config configs/data.yaml
+python -m src.data.split --config configs/data.yaml
 运行：
 python -m src.experiments.train --config configs/models/bnn/pv_usibnn_recursive_4h.yaml
 调参：
 python -m src.experiments.tune --config configs/tune/pv_usibnn_recursive_4h.yaml --note "PV USIBNN Recursive 4h tuning"
 python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/pv_usibnn_recursive_4h_generation_optuna --target configs/models/bnn/pv_usibnn_recursive_4h.yaml
+点预测：
+python -m src.experiments.compare_recursive_point_forecasts_4h
+概率预测：
+python -m src.experiments.compare_recursive_interval_methods_4h --run outputs/train/pv_usibnn_recursive/<训练时间戳>
+消融实验：
+python -m src.experiments.ablate_bnn_recursive_4h --config configs/models/bnn/pv_usibnn_recursive_4h.yaml
+多步递推：
+python -m src.experiments.compare_bnn_strategies_4h
