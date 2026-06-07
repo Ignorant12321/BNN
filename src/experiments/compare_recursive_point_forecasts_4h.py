@@ -168,7 +168,12 @@ def run_recursive_point_forecast(
     train_horizon = int(step_config["data"]["horizon"])
     step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
-    train_result = train_model(model, step_arrays, step_config)
+    train_result = train_model(
+        model,
+        step_arrays,
+        step_config,
+        validation_metrics_callback=lambda fitted_model: recursive_validation_metrics(spec.label, fitted_model, arrays_by_split["val"], step_config),
+    )
     epoch_history = list(getattr(train_result, "epoch_history", train_result if isinstance(train_result, list) else []))
 
     predictions = recursive_prediction_frame(spec.label, model, arrays_by_split["test"], config=step_config)
@@ -210,6 +215,15 @@ def point_metrics(predictions: pd.DataFrame, config: dict[str, Any] | None = Non
     metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
     metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     return {name: metrics[name] for name in POINT_METRIC_NAMES}
+
+
+def recursive_validation_metrics(label: str, model, arrays, config: dict[str, Any]) -> dict[str, float]:
+    """Calculate full recursive validation metrics for early stopping."""
+    predictions = recursive_prediction_frame(label, model, arrays, config=config)
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"val_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"val_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
+    return metrics
 
 
 def write_point_forecast_artifacts(compare_dir: Path, runs: list[RecursivePointForecastRun], compare_config: dict[str, Any]) -> None:

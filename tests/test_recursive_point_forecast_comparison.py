@@ -56,7 +56,7 @@ def test_recursive_point_comparison_reuses_previous_predictions_for_each_model(t
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.load_config", fake_load_config)
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.load_or_make_split_arrays", lambda config: {"train": arrays, "val": arrays, "test": arrays})
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.build_model", lambda config: AddOneModel())
-    monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.train_model", lambda model, split_arrays, config: [{"epoch": 1.0, "loss": 0.0}])
+    monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.train_model", lambda model, split_arrays, config, **kwargs: [{"epoch": 1.0, "loss": 0.0}])
 
     out_dir = run_recursive_point_forecast_comparison(output_dir=tmp_path / "outputs", configs=["bnn.yaml", "mlp.yaml"])
 
@@ -95,7 +95,7 @@ def test_recursive_point_comparison_prints_progress(tmp_path: Path, monkeypatch,
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.load_config", fake_load_config)
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.load_or_make_split_arrays", lambda config: {"train": arrays, "val": arrays, "test": arrays})
     monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.build_model", lambda config: AddOneModel())
-    monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.train_model", lambda model, split_arrays, config: [{"epoch": 1.0, "loss": 0.0}])
+    monkeypatch.setattr("src.experiments.compare_recursive_point_forecasts_4h.train_model", lambda model, split_arrays, config, **kwargs: [{"epoch": 1.0, "loss": 0.0}])
 
     out_dir = run_recursive_point_forecast_comparison(output_dir=tmp_path / "outputs", configs=["bnn.yaml"])
 

@@ -24,6 +24,7 @@ def train_model(
     arrays_by_split: dict[str, Any],
     config: dict[str, Any],
     epoch_callback: Callable[[dict[str, float]], None] | None = None,
+    validation_metrics_callback: Callable[[Any], dict[str, float]] | None = None,
 ) -> TrainResult:
     """只使用 train split 拟合，并只评估 train/val 过程指标。"""
     train_arrays = arrays_by_split["train"]
@@ -35,6 +36,7 @@ def train_model(
             config,
             epoch_callback=epoch_callback,
             validation_arrays=arrays_by_split.get("val"),
+            validation_metrics_callback=validation_metrics_callback,
         )
         metrics = evaluate_train_val(model, arrays_by_split, lambda fitted_model, arrays: evaluate_torch_model(fitted_model, arrays, config=config))
     elif hasattr(model, "fit"):

@@ -47,6 +47,7 @@ def train_torch_model(
     config: dict[str, Any],
     epoch_callback=None,
     validation_arrays=None,
+    validation_metrics_callback=None,
 ) -> list[dict[str, float]]:
     """在配置指定设备上训练 PyTorch 模型，并返回每轮训练损失。"""
     training = config.get("training", {})
@@ -103,7 +104,11 @@ def train_torch_model(
                     batch_size=int(training.get("batch_size", 64)),
                     kl_beta=kl_beta,
                 )
-                val_metrics = evaluate_torch_validation_metrics(model, validation_arrays, device=device, config=config)
+                val_metrics = (
+                    validation_metrics_callback(model)
+                    if validation_metrics_callback is not None
+                    else evaluate_torch_validation_metrics(model, validation_arrays, device=device, config=config)
+                )
                 model.train()
                 item.update(val_metrics)
                 monitor_value = item[monitor_metric]

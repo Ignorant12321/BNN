@@ -186,7 +186,17 @@ def run_zero_feature_recursive_training(
     fit_started_at = datetime.now()
     fit_started_timer = time.perf_counter()
     print_training_process_start(fit_started_at)
-    train_result = train_model(model, step_arrays, step_config, epoch_callback=print_epoch_progress)
+    train_result = train_model(
+        model,
+        step_arrays,
+        step_config,
+        epoch_callback=print_epoch_progress,
+        validation_metrics_callback=lambda fitted_model: recursive_prediction_metrics(
+            "val",
+            recursive_prediction_frame("Recursive", fitted_model, arrays_by_split["val"], config=step_config),
+            config=step_config,
+        ),
+    )
     fit_ended_at = datetime.now()
     print_training_process_end(fit_ended_at, time.perf_counter() - fit_started_timer, train_result.epoch_history)
 

@@ -170,7 +170,12 @@ def run_recursive_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun
     train_horizon = int(step_config["data"]["horizon"])
     step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
-    train_model(model, step_arrays, step_config)
+    train_model(
+        model,
+        step_arrays,
+        step_config,
+        validation_metrics_callback=lambda fitted_model: recursive_validation_metrics("Recursive", fitted_model, arrays_by_split["val"], step_config),
+    )
     predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
     metric_scale = normalization_scale_from_config(step_config)
     metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
@@ -314,6 +319,15 @@ def prediction_frame_from_arrays(
                 row["target_time"] = str(target_time[sample_index, horizon_index])
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def recursive_validation_metrics(label: str, model, arrays: WindowArrays, config: dict[str, Any]) -> dict[str, float]:
+    """Calculate full recursive validation metrics for early stopping."""
+    predictions = recursive_prediction_frame(label, model, arrays, config=config)
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"val_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"val_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
+    return metrics
 
 
 def read_split_metrics(path: Path) -> dict[str, float]:
