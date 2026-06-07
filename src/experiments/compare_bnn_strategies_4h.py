@@ -155,6 +155,7 @@ def run_direct_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun:
 def run_recursive_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun:
     """Train one one-step BNN and roll its prediction forward to the full 4h horizon."""
     started = time.perf_counter()
+    config = recursive_forecast_config(config)
     set_random_seed(int(config.get("seed", 42)))
     run_dir.mkdir(parents=True, exist_ok=True)
     arrays_by_split = load_or_make_split_arrays(config)
@@ -165,7 +166,8 @@ def run_recursive_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun
         arrays_by_split = transform_window_arrays_by_split(arrays_by_split, scaler)
 
     step_config = make_recursive_step_config(config)
-    step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
+    train_horizon = int(step_config["data"]["horizon"])
+    step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
     train_model(model, step_arrays, step_config)
     predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
@@ -190,21 +192,39 @@ def make_direct_step_config(config: dict[str, Any], step_index: int) -> dict[str
 
 def make_recursive_step_config(config: dict[str, Any]) -> dict[str, Any]:
     """Build the one-step config used by the recursive strategy."""
-    step_config = deep_update(copy.deepcopy(config), {"data": {"horizon": 1}})
+    strategy = config.get("strategy", {})
+    train_horizon = int(strategy.get("train_horizon", 1))
+    if train_horizon < 1:
+        raise ValueError("strategy.train_horizon must be a positive integer")
+    step_config = deep_update(copy.deepcopy(config), {"data": {"horizon": train_horizon}})
     step_config["run_dir"] = str(Path(config.get("run_dir", "")) / "recursive-step") if config.get("run_dir") else ""
     return step_config
 
 
-def slice_step_arrays(arrays: WindowArrays, step_index: int) -> WindowArrays:
-    """Select one forecast step while keeping the same historical and direct inputs."""
+def recursive_forecast_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the full recursive forecast config using the strategy horizon when present."""
+    result = copy.deepcopy(config)
+    strategy = result.get("strategy", {})
+    forecast_horizon = int(strategy.get("forecast_horizon", result.get("data", {}).get("horizon", 1)))
+    if forecast_horizon < 1:
+        raise ValueError("strategy.forecast_horizon must be a positive integer")
+    result.setdefault("data", {})["horizon"] = forecast_horizon
+    return result
+
+
+def slice_step_arrays(arrays: WindowArrays, step_index: int, step_count: int = 1) -> WindowArrays:
+    """Select forecast steps while keeping the same historical and direct inputs."""
+    if step_count < 1:
+        raise ValueError("step_count must be a positive integer")
+    stop_index = step_index + step_count
     target_time = None
     if arrays.target_time is not None:
-        target_time = arrays.target_time[:, step_index : step_index + 1]
+        target_time = arrays.target_time[:, step_index:stop_index]
     return WindowArrays(
         history=arrays.history,
-        weather=arrays.weather[:, step_index : step_index + 1, :],
+        weather=arrays.weather[:, step_index:stop_index, :],
         direct=arrays.direct,
-        target=arrays.target[:, step_index : step_index + 1],
+        target=arrays.target[:, step_index:stop_index],
         target_time=target_time,
     )
 

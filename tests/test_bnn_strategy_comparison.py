@@ -8,6 +8,8 @@ from src.experiments.compare_bnn_strategies_4h import (
     DEFAULT_BNN_4H_CONFIG,
     combine_direct_prediction_frames,
     make_direct_step_config,
+    make_recursive_step_config,
+    recursive_forecast_config,
     recursive_prediction_frame,
     slice_step_arrays,
 )
@@ -47,6 +49,20 @@ def test_slice_step_arrays_keeps_inputs_and_selects_one_forecast_step():
     np.testing.assert_array_equal(step.target_time, arrays.target_time[:, 2:3])
 
 
+def test_slice_step_arrays_can_select_multiple_forecast_steps():
+    arrays = WindowArrays(
+        history=np.zeros((1, 2, 1), dtype=np.float32),
+        weather=np.arange(5, dtype=np.float32).reshape(1, 5, 1),
+        direct=np.array([[1.0]], dtype=np.float32),
+        target=np.array([[10.0, 11.0, 12.0, 13.0, 14.0]], dtype=np.float32),
+    )
+
+    step = slice_step_arrays(arrays, 1, step_count=3)
+
+    np.testing.assert_array_equal(step.weather, np.array([[[1.0], [2.0], [3.0]]], dtype=np.float32))
+    np.testing.assert_array_equal(step.target, np.array([[11.0, 12.0, 13.0]], dtype=np.float32))
+
+
 def test_combine_direct_prediction_frames_restores_four_hour_horizon_order():
     frames = [
         pd.DataFrame({"label": ["step"], "sample": [1], "horizon": [0], "target": [21.0], "mean": [20.0], "log_var": [0.2]}),
@@ -67,6 +83,24 @@ def test_make_direct_step_config_does_not_mutate_four_hour_config():
     step_config = make_direct_step_config(config, 0)
 
     assert step_config["data"]["horizon"] == 1
+    assert config["data"]["horizon"] == 16
+
+
+def test_make_recursive_step_config_uses_strategy_train_horizon():
+    config = {"data": {"horizon": 16}, "strategy": {"name": "recursive", "train_horizon": 3, "forecast_horizon": 16}}
+
+    step_config = make_recursive_step_config(config)
+
+    assert step_config["data"]["horizon"] == 3
+    assert config["data"]["horizon"] == 16
+
+
+def test_recursive_forecast_config_uses_strategy_forecast_horizon():
+    config = {"data": {"horizon": 16}, "strategy": {"name": "recursive", "train_horizon": 1, "forecast_horizon": 8}}
+
+    forecast_config = recursive_forecast_config(config)
+
+    assert forecast_config["data"]["horizon"] == 8
     assert config["data"]["horizon"] == 16
 
 

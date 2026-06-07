@@ -29,7 +29,12 @@ from src.data.scaling import (
     transform_window_arrays_by_split,
 )
 from src.evaluation.metrics import BASE_METRIC_NAMES
-from src.experiments.compare_bnn_strategies_4h import make_recursive_step_config, recursive_prediction_frame, slice_step_arrays
+from src.experiments.compare_bnn_strategies_4h import (
+    make_recursive_step_config,
+    recursive_forecast_config,
+    recursive_prediction_frame,
+    slice_step_arrays,
+)
 from src.experiments.train import (
     load_or_make_split_arrays,
     print_epoch_progress,
@@ -152,6 +157,7 @@ def run_zero_feature_recursive_training(
     note: str | None = None,
 ) -> RecursiveExperimentResult:
     """Train a recursive model after zeroing one input feature group."""
+    config = recursive_forecast_config(config)
     started_at = datetime.now()
     started_timer = time.perf_counter()
     set_random_seed(int(config.get("seed", 42)))
@@ -172,7 +178,8 @@ def run_zero_feature_recursive_training(
     split_sizes = {split_name: len(arrays.target) for split_name, arrays in arrays_by_split.items()}
 
     step_config = make_recursive_step_config(config)
-    step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
+    train_horizon = int(step_config["data"]["horizon"])
+    step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
     display_model_name = recursive_strategy_model_name(config)
     print_training_parameters({**step_config, "model": {**step_config.get("model", {}), "name": display_model_name}}, run_dir, model, started_at, split_sizes)

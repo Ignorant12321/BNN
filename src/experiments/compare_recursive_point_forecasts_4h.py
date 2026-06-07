@@ -32,7 +32,12 @@ from src.data.scaling import (
 from src.evaluation.metrics import generation_period_metrics, prediction_frame_metrics
 from src.evaluation.plots import write_comparison_loss_png, write_prediction_window_metrics_csv, write_prediction_window_pngs
 from src.experiments.compare import write_metrics_csv
-from src.experiments.compare_bnn_strategies_4h import make_recursive_step_config, recursive_prediction_frame, slice_step_arrays
+from src.experiments.compare_bnn_strategies_4h import (
+    make_recursive_step_config,
+    recursive_forecast_config,
+    recursive_prediction_frame,
+    slice_step_arrays,
+)
 from src.experiments.train import load_or_make_split_arrays, set_random_seed, write_epoch_history, write_split_metrics
 from src.models.registry import build_model
 from src.training.trainer import train_model
@@ -147,7 +152,7 @@ def run_recursive_point_forecast(
 ) -> RecursivePointForecastRun:
     """Train a one-step model from a 4h config and recursively roll it over the test horizon."""
     started = time.perf_counter()
-    config = recursive_runtime_config(load_config(spec.config_path), epochs=epochs, n_samples=n_samples)
+    config = recursive_forecast_config(recursive_runtime_config(load_config(spec.config_path), epochs=epochs, n_samples=n_samples))
     set_random_seed(int(config.get("seed", 42)))
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "predictions").mkdir(parents=True, exist_ok=True)
@@ -160,7 +165,8 @@ def run_recursive_point_forecast(
         arrays_by_split = transform_window_arrays_by_split(arrays_by_split, scaler)
 
     step_config = make_recursive_step_config(config)
-    step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
+    train_horizon = int(step_config["data"]["horizon"])
+    step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
     train_result = train_model(model, step_arrays, step_config)
     epoch_history = list(getattr(train_result, "epoch_history", train_result if isinstance(train_result, list) else []))

@@ -29,6 +29,7 @@ from src.evaluation.metrics import generation_period_metrics, prediction_frame_m
 from src.evaluation.plots import write_prediction_window_metrics_csv, write_prediction_window_pngs, write_training_loss_png
 from src.experiments.compare_bnn_strategies_4h import (
     make_recursive_step_config,
+    recursive_forecast_config,
     recursive_prediction_frame,
     slice_step_arrays,
 )
@@ -109,6 +110,7 @@ def recursive_strategy_model_name(config: dict[str, Any]) -> str:
 
 def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | None = None) -> RecursiveExperimentResult:
     """Train one-step BNN and save recursive 4h outputs like a normal training run."""
+    config = recursive_forecast_config(config)
     started_at = datetime.now()
     started_timer = time.perf_counter()
     set_random_seed(int(config.get("seed", 42)))
@@ -130,7 +132,8 @@ def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | No
     split_sizes = {split_name: len(arrays.target) for split_name, arrays in arrays_by_split.items()}
 
     step_config = make_recursive_step_config(config)
-    step_arrays = {split_name: slice_step_arrays(arrays, 0) for split_name, arrays in arrays_by_split.items()}
+    train_horizon = int(step_config["data"]["horizon"])
+    step_arrays = {split_name: slice_step_arrays(arrays, 0, step_count=train_horizon) for split_name, arrays in arrays_by_split.items()}
     model = build_model(step_config)
     display_model_name = recursive_strategy_model_name(config)
     print_training_parameters({**step_config, "model": {**step_config.get("model", {}), "name": display_model_name}}, run_dir, model, started_at, split_sizes)
