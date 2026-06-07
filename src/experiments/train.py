@@ -26,7 +26,7 @@ from src.artifacts.run_io import create_run_dir, save_config, save_manifest, sav
 from src.config import load_config
 from src.data.pv import load_split_window_arrays_from_config
 from src.data.scaling import attach_fitted_scaler, fit_window_scaler, should_scale_torch_training, transform_window_arrays_by_split
-from src.evaluation.metrics import BASE_METRIC_NAMES, evaluate_arrays, generation_period_metrics
+from src.evaluation.metrics import BASE_METRIC_NAMES, evaluate_arrays, generation_period_metrics, normalization_scale_from_config
 from src.evaluation.plots import write_prediction_window_metrics_csv, write_prediction_window_pngs, write_training_loss_png
 from src.evaluation.predictor import predict_dataframe
 from src.models.registry import build_model
@@ -76,16 +76,17 @@ def run_training(config: dict[str, Any], note: str | None = None) -> Path:
         for split_name in ("train", "val", "test")
     }
     test_predictions = generation_predictions["test"]
+    metric_scale = normalization_scale_from_config(config)
     metrics = dict(train_result.metrics)
     for split_name in ("train", "val"):
         metrics.update(
             {
                 f"{split_name}_generation_{name}": value
-                for name, value in generation_period_metrics(generation_predictions[split_name]).items()
+                for name, value in generation_period_metrics(generation_predictions[split_name], normalization_scale_value=metric_scale).items()
             }
         )
     metrics.update({f"test_{name}": value for name, value in evaluate_test_split(model, arrays_by_split, config).items()})
-    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(test_predictions).items()})
+    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(test_predictions, normalization_scale_value=metric_scale).items()})
     fit_ended_at = datetime.now()
     fit_duration_seconds = time.perf_counter() - fit_started_timer
     print_training_process_end(fit_ended_at, fit_duration_seconds, train_result.epoch_history)

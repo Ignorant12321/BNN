@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from src.evaluation.metrics import generation_period_metrics, prediction_frame_metrics, regression_metrics
+from src.evaluation.metrics import generation_period_metrics, normalization_scale_from_config, prediction_frame_metrics, regression_metrics
 from src.evaluation.predictor import predict_arrays, predict_dataframe
 from src.data.scaling import inverse_target_prediction, inverse_target_values
 from src.torch_runtime import import_torch
@@ -184,8 +184,9 @@ def evaluate_torch_validation_metrics(model, arrays, device=None, config: dict[s
         device = next(model.parameters()).device
     model.to(device)
     predictions = predict_dataframe("validation", model, arrays, config=config)
-    metrics = {f"val_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
-    metrics.update({f"val_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"val_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"val_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     return metrics
 
 
@@ -202,6 +203,7 @@ def evaluate_torch_model(model, arrays, device=None, config: dict[str, Any] | No
         mean,
         log_var,
         target,
+        normalization_scale_value=normalization_scale_from_config(config),
     )
 
 

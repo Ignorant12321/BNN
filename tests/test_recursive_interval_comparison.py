@@ -18,7 +18,7 @@ from src.experiments.compare_recursive_interval_methods_4h import (
 )
 
 
-def test_interval_coverage_reports_percent_inside_interval():
+def test_interval_coverage_reports_fraction_inside_interval():
     frame = pd.DataFrame(
         {
             "target": [1.0, 2.0, 5.0, 9.0],
@@ -27,7 +27,7 @@ def test_interval_coverage_reports_percent_inside_interval():
         }
     )
 
-    assert interval_coverage(frame, "lower_90", "upper_90") == pytest.approx(75.0)
+    assert interval_coverage(frame, "lower_90", "upper_90") == pytest.approx(0.75)
 
 
 def test_interval_pinaw_reports_normalized_mean_width():
@@ -143,8 +143,8 @@ def test_write_coverage_summary_creates_comparison_csv(tmp_path: Path):
         "confidence,our_method_picp,our_method_pinaw,normal_picp,normal_pinaw,"
         "persistence_picp,persistence_pinaw"
     ) in text
-    assert "90,100.0,2.5,100.0,2.5,100.0,2.5" in text
-    assert "95,50.0,1.5,50.0,1.5,50.0,1.5" in text
+    assert "90,1.0,2.5,1.0,2.5,1.0,2.5" in text
+    assert "95,0.5,1.5,0.5,1.5,0.5,1.5" in text
 
 
 def test_write_calibrated_summary_includes_90_and_95_rows(tmp_path: Path):

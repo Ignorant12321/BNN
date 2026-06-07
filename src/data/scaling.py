@@ -19,6 +19,7 @@ def fit_window_scaler(arrays_by_split: dict[str, WindowArrays]) -> ScalerPayload
     power_scaler = _fit_power_scaler(train)
     return {
         "method": {"name": "standard"},
+        "normalization": {"source": "train_power_max", "scale": _power_normalization_scale(train, power_scaler)},
         "power": power_scaler,
         "history": _feature_or_power_scaler(train.history, power_scaler),
         "weather": _fit_feature_scaler(train.weather),
@@ -112,12 +113,23 @@ def _fit_scalar_scaler(values: np.ndarray) -> dict[str, Any]:
 
 
 def _fit_power_scaler(train: WindowArrays) -> dict[str, Any]:
+    return _fit_scalar_scaler(_power_values(train))
+
+
+def _power_values(train: WindowArrays) -> np.ndarray:
     values = [train.target.reshape(-1)]
     if train.history.shape[-1] == 1:
         values.append(train.history.reshape(-1))
     if train.direct.shape[-1] == 1:
         values.append(train.direct.reshape(-1))
-    return _fit_scalar_scaler(np.concatenate(values))
+    return np.concatenate(values)
+
+
+def _power_normalization_scale(train: WindowArrays, power_scaler: dict[str, Any]) -> float:
+    max_power = float(np.max(_power_values(train)))
+    if max_power > 0:
+        return max_power
+    return float(power_scaler["std"])
 
 
 def _feature_or_power_scaler(values: np.ndarray, power_scaler: dict[str, Any]) -> dict[str, Any]:

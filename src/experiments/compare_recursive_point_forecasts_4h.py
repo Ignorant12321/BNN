@@ -29,7 +29,7 @@ from src.data.scaling import (
     should_scale_torch_training,
     transform_window_arrays_by_split,
 )
-from src.evaluation.metrics import generation_period_metrics, prediction_frame_metrics
+from src.evaluation.metrics import generation_period_metrics, normalization_scale_from_config, prediction_frame_metrics
 from src.evaluation.plots import write_comparison_loss_png, write_prediction_window_metrics_csv, write_prediction_window_pngs
 from src.experiments.compare import write_metrics_csv
 from src.experiments.compare_bnn_strategies_4h import (
@@ -172,7 +172,7 @@ def run_recursive_point_forecast(
     epoch_history = list(getattr(train_result, "epoch_history", train_result if isinstance(train_result, list) else []))
 
     predictions = recursive_prediction_frame(spec.label, model, arrays_by_split["test"], config=step_config)
-    metrics = point_metrics(predictions)
+    metrics = point_metrics(predictions, config=step_config)
     duration_seconds = time.perf_counter() - started
 
     save_config(step_config, run_dir / "config.yaml")
@@ -204,10 +204,11 @@ def recursive_runtime_config(config: dict[str, Any], epochs: int | None = None, 
     return config
 
 
-def point_metrics(predictions: pd.DataFrame) -> dict[str, float]:
+def point_metrics(predictions: pd.DataFrame, config: dict[str, Any] | None = None) -> dict[str, float]:
     """Calculate point-forecast metrics only, excluding interval coverage/width."""
-    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
-    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     return {name: metrics[name] for name in POINT_METRIC_NAMES}
 
 

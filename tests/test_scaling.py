@@ -32,6 +32,8 @@ def test_window_scaler_fits_train_split_only_and_restores_target_predictions():
     expected_power_std = float(np.std(train_power))
     assert scaler["target"]["mean"] == expected_power_mean
     assert scaler["target"]["std"] == expected_power_std
+    assert scaler["normalization"]["source"] == "train_power_max"
+    assert scaler["normalization"]["scale"] == float(np.max(train_power))
     assert scaler["history"]["mean"] == [expected_power_mean]
     assert scaler["history"]["std"] == [expected_power_std]
     assert scaler["direct"]["mean"] == [expected_power_mean]

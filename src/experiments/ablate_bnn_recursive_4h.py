@@ -193,8 +193,8 @@ def run_zero_feature_recursive_training(
     val_predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["val"], config=step_config)
     predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
     metrics = dict(train_result.metrics)
-    metrics.update(recursive_prediction_metrics("val", val_predictions))
-    metrics.update(recursive_prediction_metrics("test", predictions))
+    metrics.update(recursive_prediction_metrics("val", val_predictions, config=step_config))
+    metrics.update(recursive_prediction_metrics("test", predictions, config=step_config))
 
     model_path = save_model_artifact(model, step_config, models_dir, stem="best")
     result = RecursiveExperimentResult(

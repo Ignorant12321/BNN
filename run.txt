@@ -1,0 +1,5 @@
+运行：
+python -m src.experiments.train --config configs/models/bnn/pv_usibnn_recursive_4h.yaml
+调参：
+python -m src.experiments.tune --config configs/tune/pv_usibnn_recursive_4h.yaml --note "PV USIBNN Recursive 4h tuning"
+python -m src.experiments.apply_tuning --tuning-dir outputs/tuning/pv_usibnn_recursive_4h_generation_optuna --target configs/models/bnn/pv_usibnn_recursive_4h.yaml

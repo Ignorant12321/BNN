@@ -225,6 +225,7 @@ def build_coverage_rows(
 
 
 def interval_coverage(frame: pd.DataFrame, lower_column: str, upper_column: str) -> float:
+    """Return prediction interval coverage probability as a fraction in [0, 1]."""
     target = pd.to_numeric(frame["target"], errors="coerce")
     lower = pd.to_numeric(frame[lower_column], errors="coerce")
     upper = pd.to_numeric(frame[upper_column], errors="coerce")
@@ -232,7 +233,7 @@ def interval_coverage(frame: pd.DataFrame, lower_column: str, upper_column: str)
     if not valid.any():
         return float("nan")
     covered = (target[valid] >= lower[valid]) & (target[valid] <= upper[valid])
-    return float(covered.mean() * 100.0)
+    return float(covered.mean())
 
 
 def interval_pinaw(frame: pd.DataFrame, lower_column: str, upper_column: str) -> float:

@@ -23,13 +23,18 @@ INTERVAL_Z = {
 }
 
 
-def regression_metrics(mean: np.ndarray, log_var: np.ndarray, target: np.ndarray) -> dict[str, float]:
+def regression_metrics(
+    mean: np.ndarray,
+    log_var: np.ndarray,
+    target: np.ndarray,
+    normalization_scale_value: float | None = None,
+) -> dict[str, float]:
     """计算概率预测指标。"""
     aligned_target = target[: len(mean)]
     error = mean - aligned_target
     mae = float(np.mean(np.abs(error)))
     rmse = float(np.sqrt(np.mean((mean - aligned_target) ** 2)))
-    scale = normalization_scale(aligned_target)
+    scale = normalization_scale(aligned_target, normalization_scale_value=normalization_scale_value)
     metrics = {
         "mae": mae,
         "rmse": rmse,
@@ -53,7 +58,7 @@ def regression_metrics(mean: np.ndarray, log_var: np.ndarray, target: np.ndarray
     return metrics
 
 
-def prediction_frame_metrics(frame: pd.DataFrame) -> dict[str, float]:
+def prediction_frame_metrics(frame: pd.DataFrame, normalization_scale_value: float | None = None) -> dict[str, float]:
     """Calculate regression metrics from flattened prediction rows."""
     if frame.empty:
         return empty_metrics()
@@ -61,13 +66,19 @@ def prediction_frame_metrics(frame: pd.DataFrame) -> dict[str, float]:
         frame["mean"].to_numpy(dtype=np.float32).reshape(-1, 1),
         frame["log_var"].to_numpy(dtype=np.float32).reshape(-1, 1),
         frame["target"].to_numpy(dtype=np.float32).reshape(-1, 1),
+        normalization_scale_value=normalization_scale_value,
     )
 
 
-def generation_period_metrics(frame: pd.DataFrame, start: str = "06:00", end: str = "18:00") -> dict[str, float]:
+def generation_period_metrics(
+    frame: pd.DataFrame,
+    start: str = "06:00",
+    end: str = "18:00",
+    normalization_scale_value: float | None = None,
+) -> dict[str, float]:
     """Calculate metrics for target times in the effective PV generation period."""
     subset = generation_period_subset(frame, start=start, end=end)
-    return prediction_frame_metrics(subset)
+    return prediction_frame_metrics(subset, normalization_scale_value=normalization_scale_value)
 
 
 def generation_period_subset(frame: pd.DataFrame, start: str = "06:00", end: str = "18:00") -> pd.DataFrame:
@@ -87,8 +98,10 @@ def empty_metrics() -> dict[str, float]:
     return {name: float("nan") for name in BASE_METRIC_NAMES}
 
 
-def normalization_scale(target: np.ndarray) -> float:
+def normalization_scale(target: np.ndarray, normalization_scale_value: float | None = None) -> float:
     """返回归一化指标和 PINAW 共用的目标值尺度。"""
+    if normalization_scale_value is not None and float(normalization_scale_value) > 0:
+        return float(normalization_scale_value)
     target_range = float(np.max(target) - np.min(target))
     if target_range > 0:
         return target_range
@@ -102,3 +115,17 @@ def evaluate_arrays(model, arrays) -> dict[str, float]:
     """用 NumPy 风格模型评估一个 WindowArrays。"""
     mean, log_var = model(arrays.as_batch())
     return regression_metrics(mean, log_var, arrays.target)
+
+
+def normalization_scale_from_config(config: dict | None) -> float | None:
+    """Return the fixed metric normalization scale saved with a fitted scaler."""
+    scaling = (config or {}).get("data", {}).get("scaling", {})
+    scaler = scaling.get("scaler") if isinstance(scaling, dict) else None
+    normalization = scaler.get("normalization") if isinstance(scaler, dict) else None
+    if not isinstance(normalization, dict):
+        return None
+    scale = normalization.get("scale")
+    if scale is None:
+        return None
+    scale = float(scale)
+    return scale if scale > 0 else None

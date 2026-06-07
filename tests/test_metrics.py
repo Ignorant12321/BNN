@@ -30,6 +30,19 @@ def test_regression_metrics_report_error_and_interval_scores_without_nll():
     assert metrics["pinaw_90"] == pytest.approx((2 * 1.6448536269514722 * 2.0) / 4.0)
 
 
+def test_regression_metrics_can_use_fixed_normalization_scale():
+    mean = np.array([[8.0, 12.0]], dtype=np.float32)
+    target = np.array([[10.0, 10.0]], dtype=np.float32)
+    log_var = np.log(np.ones_like(mean, dtype=np.float32))
+
+    metrics = regression_metrics(mean, log_var, target, normalization_scale_value=20.0)
+
+    assert metrics["mae"] == pytest.approx(2.0)
+    assert metrics["rmse"] == pytest.approx(2.0)
+    assert metrics["nmae"] == pytest.approx(0.1)
+    assert metrics["nrmse"] == pytest.approx(0.1)
+
+
 def test_regression_metrics_mark_interval_scores_nan_without_uncertainty():
     mean = np.array([[1.0, 3.0]], dtype=np.float32)
     target = np.array([[2.0, 1.0]], dtype=np.float32)

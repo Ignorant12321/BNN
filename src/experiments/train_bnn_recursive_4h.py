@@ -25,7 +25,7 @@ from src.data.scaling import (
     should_scale_torch_training,
     transform_window_arrays_by_split,
 )
-from src.evaluation.metrics import generation_period_metrics, prediction_frame_metrics
+from src.evaluation.metrics import generation_period_metrics, normalization_scale_from_config, prediction_frame_metrics
 from src.evaluation.plots import write_prediction_window_metrics_csv, write_prediction_window_pngs, write_training_loss_png
 from src.experiments.compare_bnn_strategies_4h import (
     make_recursive_step_config,
@@ -146,8 +146,8 @@ def run_recursive_training(config: dict[str, Any], run_dir: Path, note: str | No
     val_predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["val"], config=step_config)
     predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
     metrics = dict(train_result.metrics)
-    metrics.update(recursive_prediction_metrics("val", val_predictions))
-    metrics.update(recursive_prediction_metrics("test", predictions))
+    metrics.update(recursive_prediction_metrics("val", val_predictions, config=step_config))
+    metrics.update(recursive_prediction_metrics("test", predictions, config=step_config))
 
     model_path = save_model_artifact(model, step_config, models_dir, stem="best")
     ended_at = datetime.now()
@@ -206,10 +206,11 @@ def recursive_runtime_config(config: dict, epochs: int | None = None, n_samples:
     return result
 
 
-def recursive_prediction_metrics(split_name: str, predictions: pd.DataFrame) -> dict[str, float]:
+def recursive_prediction_metrics(split_name: str, predictions: pd.DataFrame, config: dict[str, Any] | None = None) -> dict[str, float]:
     """Calculate full-period and generation-period metrics for recursive predictions."""
-    metrics = {f"{split_name}_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
-    metrics.update({f"{split_name}_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"{split_name}_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"{split_name}_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     return metrics
 
 

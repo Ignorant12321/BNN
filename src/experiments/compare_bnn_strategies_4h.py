@@ -28,7 +28,7 @@ from src.data.scaling import (
     should_scale_torch_training,
     transform_window_arrays_by_split,
 )
-from src.evaluation.metrics import BASE_METRIC_NAMES, generation_period_metrics, prediction_frame_metrics
+from src.evaluation.metrics import BASE_METRIC_NAMES, generation_period_metrics, normalization_scale_from_config, prediction_frame_metrics
 from src.evaluation.predictor import predict_arrays, predict_dataframe, prediction_interval_columns
 from src.experiments.compare import write_metrics_csv
 from src.experiments.train import load_or_make_split_arrays, run_training, set_random_seed
@@ -140,8 +140,9 @@ def run_direct_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun:
         test_frames.append(predict_dataframe(f"Direct-step-{step_index + 1}", model, step_arrays["test"], config=step_config))
 
     predictions = combine_direct_prediction_frames(test_frames, label="Direct")
-    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
-    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    metric_scale = normalization_scale_from_config(config)
+    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     duration_seconds = time.perf_counter() - started
 
     predictions_dir = run_dir / "predictions"
@@ -171,8 +172,9 @@ def run_recursive_strategy(config: dict[str, Any], run_dir: Path) -> StrategyRun
     model = build_model(step_config)
     train_model(model, step_arrays, step_config)
     predictions = recursive_prediction_frame("Recursive", model, arrays_by_split["test"], config=step_config)
-    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions).items()}
-    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions).items()})
+    metric_scale = normalization_scale_from_config(step_config)
+    metrics = {f"test_{name}": value for name, value in prediction_frame_metrics(predictions, normalization_scale_value=metric_scale).items()}
+    metrics.update({f"test_generation_{name}": value for name, value in generation_period_metrics(predictions, normalization_scale_value=metric_scale).items()})
     duration_seconds = time.perf_counter() - started
 
     predictions_dir = run_dir / "predictions"

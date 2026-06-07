@@ -342,6 +342,7 @@ persistence_picp
 persistence_pinaw
 ```
 
+PICP 列统一使用 0 到 1 的比例值，例如 0.9 表示 90% 覆盖率。
 `calibrated_coverage_summary.csv` 会在验证集上按目标 PICP 校准区间宽度，再报告测试集 PICP/PINAW。
 
 ## Optuna 调参
