@@ -163,9 +163,9 @@ epoch_history.csv
 metrics.csv
 predictions/test.csv
 figures/loss_curve.png
-figures/prediction_0800_1200.png
+figures/prediction_0600_1000.png
 figures/prediction_1000_1400.png
-figures/prediction_1200_1600.png
+figures/prediction_1400_1800.png
 figures/prediction_window_metrics.csv
 models/best.pt
 ```
@@ -239,9 +239,9 @@ predictions/LSTM.csv
 figures/loss_curves.png
 figures/metrics_test_mae.png
 figures/metrics_test_nrmse.png
-figures/prediction_0800_1200.png
+figures/prediction_0600_1000.png
 figures/prediction_1000_1400.png
-figures/prediction_1200_1600.png
+figures/prediction_1400_1800.png
 ```
 
 图中的纵轴单位为：

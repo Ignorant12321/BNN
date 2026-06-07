@@ -32,7 +32,7 @@ training:
   batch_size: 64
   early_stopping:
     metric: val_generation_nrmse
-  lr: 0.00038921456872834104
-  kl_beta: 4.2407290680102695e-07
+  lr: 0.0005826016202766788
+  kl_beta: 5.332185425708881e-05
 evaluation:
   n_samples: 30

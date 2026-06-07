@@ -17,7 +17,7 @@ import pandas as pd
 from src.evaluation.metrics import BASE_METRIC_NAMES, regression_metrics
 
 
-DEFAULT_PREDICTION_INTERVALS = (("08:00", "12:00"), ("10:00", "14:00"), ("12:00", "16:00"))
+DEFAULT_PREDICTION_INTERVALS = (("06:00", "10:00"), ("10:00", "14:00"), ("14:00", "18:00"))
 LINE_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2")
 
 
@@ -98,7 +98,7 @@ def write_prediction_window_metrics_csv(
 
 
 def prediction_window_metrics(frame: pd.DataFrame, start: str, end: str) -> dict[str, float | str]:
-    """Calculate metrics for the first available date inside a clock-time interval."""
+    """Calculate metrics for the first available forecast trajectory issued at start."""
     subset = prediction_window_subset(frame, start, end)
     if subset.empty:
         return {name: "" for name in BASE_METRIC_NAMES}
@@ -117,7 +117,7 @@ def write_prediction_window_png(
     end: str,
     show_intervals: bool = True,
 ) -> None:
-    """写出一个时间段的预测曲线。"""
+    """写出一个起报时刻对应的未来预测曲线。"""
     title = f"Prediction {start}-{end}"
     if frame.empty or "target_time" not in frame.columns:
         write_line_png([], path, title=title, notes=["no target_time data"])
@@ -154,25 +154,31 @@ def write_prediction_window_png(
 
 
 def prediction_window_subset(frame: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
-    """Return rows from the first date containing target_time values inside the interval."""
-    if frame.empty or "target_time" not in frame.columns:
+    """Return rows for the first forecast issued at start and ending at end."""
+    if frame.empty or "target_time" not in frame.columns or "horizon" not in frame.columns:
         return pd.DataFrame()
     work = frame.copy()
     work["_target_time"] = pd.to_datetime(work["target_time"], errors="coerce")
-    work = work.dropna(subset=["_target_time"])
+    work["_horizon"] = pd.to_numeric(work["horizon"], errors="coerce")
+    work = work.dropna(subset=["_target_time", "_horizon"])
     if work.empty:
         return pd.DataFrame()
     start_minute = _time_to_minutes(start)
     end_minute = _time_to_minutes(end)
-    work["_minute"] = work["_target_time"].dt.hour * 60 + work["_target_time"].dt.minute
-    for date_value in sorted(work["_target_time"].dt.date.unique()):
+    work["_issue_time"] = work["_target_time"] - pd.to_timedelta((work["_horizon"] + 1) * 15, unit="m")
+    for date_value in sorted(work["_issue_time"].dt.date.unique()):
+        issue_time = pd.Timestamp(date_value) + pd.Timedelta(minutes=start_minute)
+        end_time = pd.Timestamp(date_value) + pd.Timedelta(minutes=end_minute)
         candidate = work[
-            (work["_target_time"].dt.date == date_value)
-            & (work["_minute"] >= start_minute)
-            & (work["_minute"] < end_minute)
+            (work["_issue_time"] == issue_time)
+            & (work["_target_time"] > issue_time)
+            & (work["_target_time"] <= end_time)
         ]
         if not candidate.empty:
-            return candidate
+            sort_columns = ["_target_time"]
+            if "label" in candidate.columns:
+                sort_columns = ["label", *sort_columns]
+            return candidate.sort_values(sort_columns)
     return pd.DataFrame()
 
 
@@ -265,7 +271,7 @@ def write_line_png(
     ax.set_title(title)
     if has_points:
         ax.set_xlabel("Time")
-        ax.set_ylabel("AC Power (kW)")
+        ax.set_ylabel("AC Power / kW")
         ax.grid(True, alpha=0.25)
         for marker in markers or []:
             ax.axvline(

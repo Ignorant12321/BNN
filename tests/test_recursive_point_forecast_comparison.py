@@ -68,7 +68,7 @@ def test_recursive_point_comparison_reuses_previous_predictions_for_each_model(t
     bnn_predictions = pd.read_csv(out_dir / "predictions" / "BNN.csv")
     first_sample = bnn_predictions[bnn_predictions["sample"] == 0].sort_values("horizon")
     assert first_sample["mean"].tolist() == [2.0, 3.0, 4.0, 5.0]
-    assert (out_dir / "figures" / "prediction_0800_1200.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_0600_1000.png").read_bytes().startswith(b"\x89PNG")
 
 
 def test_recursive_point_comparison_prints_progress(tmp_path: Path, monkeypatch, capsys):

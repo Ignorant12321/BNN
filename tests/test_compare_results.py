@@ -87,9 +87,9 @@ def test_compare_outputs_research_artifacts_without_duplicate_txt(tmp_path: Path
     assert "lower_95" in predictions_text
     assert "upper_95" in predictions_text
     assert (out_dir / "figures" / "loss_curves.png").read_bytes().startswith(b"\x89PNG")
-    assert (out_dir / "figures" / "prediction_0800_1200.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_0600_1000.png").read_bytes().startswith(b"\x89PNG")
     assert (out_dir / "figures" / "prediction_1000_1400.png").read_bytes().startswith(b"\x89PNG")
-    assert (out_dir / "figures" / "prediction_1200_1600.png").read_bytes().startswith(b"\x89PNG")
+    assert (out_dir / "figures" / "prediction_1400_1800.png").read_bytes().startswith(b"\x89PNG")
     assert (out_dir / "figures" / "prediction_window_metrics.csv").is_file()
 
 

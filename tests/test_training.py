@@ -172,7 +172,7 @@ def test_run_training_fits_only_train_split_and_writes_artifacts(tmp_path, monke
     assert interval_metrics_path.is_file()
     interval_metrics_text = interval_metrics_path.read_text(encoding="utf-8")
     assert "interval_start,interval_end,mae,rmse,nmae,nrmse,picp_90,pinaw_90,picp_95,pinaw_95" in interval_metrics_text
-    for name in ("prediction_0800_1200.png", "prediction_1000_1400.png", "prediction_1200_1600.png"):
+    for name in ("prediction_0600_1000.png", "prediction_1000_1400.png", "prediction_1400_1800.png"):
         prediction_figure = run_dir / "figures" / name
         assert prediction_figure.is_file()
         assert prediction_figure.read_bytes().startswith(b"\x89PNG")

@@ -5,6 +5,10 @@ import pandas as pd
 import src.evaluation.plots as plots
 
 
+def test_default_prediction_intervals_cover_6_to_18_daytime_windows():
+    assert plots.DEFAULT_PREDICTION_INTERVALS == (("06:00", "10:00"), ("10:00", "14:00"), ("14:00", "18:00"))
+
+
 def test_training_loss_plot_does_not_overlay_metric_notes(monkeypatch):
     captured = {}
 
@@ -101,7 +105,9 @@ def test_prediction_window_plot_labels_axes_and_interval_legend(monkeypatch, tmp
     frame = pd.DataFrame(
         {
             "label": ["BNN"],
-            "target_time": ["2020-01-01 08:00"],
+            "sample": [0],
+            "horizon": [0],
+            "target_time": ["2020-01-01 08:15"],
             "target": [1.0],
             "mean": [1.1],
             "log_var": [0.0],
@@ -111,7 +117,7 @@ def test_prediction_window_plot_labels_axes_and_interval_legend(monkeypatch, tmp
     plots.write_prediction_window_png(frame, tmp_path / "prediction.png", "08:00", "12:00")
 
     assert calls["xlabel"] == "Time"
-    assert calls["ylabel"] == "AC Power (kW)"
+    assert calls["ylabel"] == "AC Power / kW"
     assert "BNN 95% interval" in calls["fill_labels"]
     assert "BNN 90% interval" in calls["fill_labels"]
 
@@ -163,7 +169,9 @@ def test_prediction_window_plot_can_hide_interval_bands(monkeypatch, tmp_path):
     frame = pd.DataFrame(
         {
             "label": ["BNN"],
-            "target_time": ["2020-01-01 08:00"],
+            "sample": [0],
+            "horizon": [0],
+            "target_time": ["2020-01-01 08:15"],
             "target": [1.0],
             "mean": [1.1],
             "log_var": [0.0],
@@ -179,3 +187,59 @@ def test_prediction_window_plot_can_hide_interval_bands(monkeypatch, tmp_path):
     )
 
     assert calls["fill_count"] == 0
+
+
+def test_prediction_window_subset_returns_single_forecast_trajectory_from_start_clock():
+    frame = pd.DataFrame(
+        {
+            "label": ["BNN", "BNN", "BNN", "BNN", "BNN"],
+            "sample": [0, 0, 0, 1, 1],
+            "horizon": [0, 1, 15, 0, 15],
+            "target_time": [
+                "2020-01-01 08:15",
+                "2020-01-01 08:30",
+                "2020-01-01 12:00",
+                "2020-01-01 08:00",
+                "2020-01-01 11:45",
+            ],
+            "target": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "mean": [1.1, 2.1, 3.1, 4.1, 5.1],
+            "log_var": [0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    )
+
+    subset = plots.prediction_window_subset(frame, "08:00", "12:00")
+
+    assert subset["sample"].tolist() == [0, 0, 0]
+    assert subset["horizon"].tolist() == [0, 1, 15]
+    assert subset["target_time"].tolist() == [
+        "2020-01-01 08:15",
+        "2020-01-01 08:30",
+        "2020-01-01 12:00",
+    ]
+
+
+def test_prediction_window_subset_falls_back_to_next_date_with_matching_issue_time():
+    frame = pd.DataFrame(
+        {
+            "label": ["BNN", "BNN", "BNN"],
+            "sample": [0, 1, 1],
+            "horizon": [0, 0, 15],
+            "target_time": [
+                "2020-01-01 08:30",
+                "2020-01-02 08:15",
+                "2020-01-02 12:00",
+            ],
+            "target": [1.0, 2.0, 3.0],
+            "mean": [1.1, 2.1, 3.1],
+            "log_var": [0.0, 0.0, 0.0],
+        }
+    )
+
+    subset = plots.prediction_window_subset(frame, "08:00", "12:00")
+
+    assert subset["sample"].tolist() == [1, 1]
+    assert subset["target_time"].tolist() == [
+        "2020-01-02 08:15",
+        "2020-01-02 12:00",
+    ]

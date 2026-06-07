@@ -185,7 +185,7 @@ def test_read_comparison_includes_comparison_figures_and_prediction_summaries(tm
     )
     (figures_dir / "metrics_test_mae.png").write_bytes(b"\x89PNG\r\n")
     (figures_dir / "loss_curves.png").write_bytes(b"\x89PNG\r\n")
-    (figures_dir / "prediction_0800_1200.png").write_bytes(b"\x89PNG\r\n")
+    (figures_dir / "prediction_0600_1000.png").write_bytes(b"\x89PNG\r\n")
     (predictions_dir / "BNN-1h.csv").write_text(
         "label,sample,horizon,target,mean,log_var,std,lower_90,upper_90,lower_95,upper_95,target_time\n"
         "BNN-1h,0,0,1.0,1.5,0.0,1.0,0.0,2.0,-0.5,2.5,2020-01-01 00:00:00\n"
@@ -197,7 +197,7 @@ def test_read_comparison_includes_comparison_figures_and_prediction_summaries(tm
 
     assert [(figure["group"], figure["name"]) for figure in payload["figures"]] == [
         ("loss", "loss_curves.png"),
-        ("predict", "prediction_0800_1200.png"),
+        ("predict", "prediction_0600_1000.png"),
     ]
     assert payload["runs"][0]["predictionSummary"] == {
         "rows": 2,
@@ -234,7 +234,7 @@ def test_read_comparison_does_not_modify_old_prediction_artifacts(tmp_path: Path
 
     unchanged_text = (predictions_dir / "BNN-1h.csv").read_text(encoding="utf-8")
     assert "lower_90" not in unchanged_text
-    assert not (figures_dir / "prediction_0800_1200.png").exists()
+    assert not (figures_dir / "prediction_0600_1000.png").exists()
     assert not (figures_dir / "prediction_window_metrics.csv").exists()
 
 
