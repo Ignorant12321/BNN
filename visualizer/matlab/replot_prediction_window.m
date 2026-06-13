@@ -43,12 +43,15 @@ outputSuffix = "_matlab";
 
 % 10. 样式设置：颜色使用 RGB，数值范围 0 到 1。
 actualColor = [0.00 0.00 0.00];
-predictionColor = [0.00 0.28 0.75];
-interval95Color = [0.74 0.84 1.00];
-interval90Color = [0.34 0.60 1.00];
+predictionColor = [1.00 0.00 0.00];
+interval95Color = [0.55 0.95 0.95];
+interval90Color = [0.45 0.70 0.95];
+actualLineStyle = "-";
+predictionLineStyle = "--";
 lineWidth = 1.8;
-fontName = "Times New Roman";
-fontSize = 12;
+englishFontName = "Times New Roman";
+chineseFontName = "SimSun";
+fontSize = 18;
 
 %% 自动定位项目根目录、最新 run 和 CSV
 % 脚本可以从任意 MATLAB 当前目录运行，因为这里会基于本文件位置定位仓库根目录。
@@ -83,7 +86,7 @@ for i = 1:size(timeWindows, 1)
         titlePrefix + " " + windowLabel, xLabelText, yLabelText, ...
         showInterval95, showInterval90, showGrid, ...
         actualColor, predictionColor, interval95Color, interval90Color, ...
-        lineWidth, fontName, fontSize);
+        actualLineStyle, predictionLineStyle, lineWidth, englishFontName, chineseFontName, fontSize);
 
     savePredictionFigure( ...
         gcf, runDir, "prediction_" + formatWindowSlug(startClock, endClock) + outputSuffix, ...
@@ -113,7 +116,7 @@ function plotPredictionWindow( ...
     T, startClock, endClock, plotDate, figureTitle, xLabelText, yLabelText, ...
     showInterval95, showInterval90, showGrid, ...
     actualColor, predictionColor, interval95Color, interval90Color, ...
-    lineWidth, fontName, fontSize)
+    actualLineStyle, predictionLineStyle, lineWidth, englishFontName, chineseFontName, fontSize)
     % 根据 horizon 反推起报时刻，只保留同一次未来 4h 预测轨迹。
     if ~ismember("horizon", string(T.Properties.VariableNames))
         error("预测 CSV 缺少 horizon 列，无法还原同一起报时刻的未来预测轨迹。");
@@ -187,10 +190,10 @@ function plotPredictionWindow( ...
         legendItems(end + 1) = "90% interval";
     end
 
-    plot(x, actual, "-", "Color", actualColor, "LineWidth", lineWidth);
+    plot(x, actual, "LineStyle", actualLineStyle, "Color", actualColor, "LineWidth", lineWidth);
     legendItems(end + 1) = "Actual";
 
-    plot(x, predicted, "-", "Color", predictionColor, "LineWidth", lineWidth);
+    plot(x, predicted, "LineStyle", predictionLineStyle, "Color", predictionColor, "LineWidth", lineWidth);
     legendItems(end + 1) = "Prediction";
 
     if showGrid
@@ -199,14 +202,16 @@ function plotPredictionWindow( ...
         grid off;
     end
 
-    xlabel(xLabelText);
-    ylabel(yLabelText);
-    title(figureTitle);
-    legend(legendItems, "Location", "best");
+    xlabel(xLabelText, "FontName", chooseTextFont(xLabelText, englishFontName, chineseFontName));
+    ylabel(yLabelText, "FontName", chooseTextFont(yLabelText, englishFontName, chineseFontName));
+    title(figureTitle, "FontName", chooseTextFont(figureTitle, englishFontName, chineseFontName));
+    lgd = legend(legendItems, "Location", "best");
+    lgd.FontName = englishFontName;
+    lgd.FontSize = fontSize;
 
     ax = gca;
     xlim([selectedIssueTime + minutes(15), selectedEndTime]);
-    ax.FontName = fontName;
+    ax.FontName = englishFontName;
     ax.FontSize = fontSize;
     ax.LineWidth = 1;
     box on;
@@ -234,6 +239,20 @@ function savePredictionFigure(figHandle, runDir, outputName, saveMatlabFig, save
         exportgraphics(figHandle, pdfPath, "ContentType", "vector");
         fprintf("已保存 PDF：%s\n", pdfPath);
     end
+end
+
+function fontName = chooseTextFont(textValue, englishFontName, chineseFontName)
+    % 中文使用宋体，英文使用 Times New Roman。
+    if containsCjk(textValue)
+        fontName = chineseFontName;
+    else
+        fontName = englishFontName;
+    end
+end
+
+function result = containsCjk(textValue)
+    textChars = char(string(textValue));
+    result = any(textChars >= char(19968) & textChars <= char(40959));
 end
 
 function label = formatWindowLabel(startClock, endClock)

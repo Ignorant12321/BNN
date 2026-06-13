@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import pandas as pd
 
 from src.evaluation.metrics import BASE_METRIC_NAMES, regression_metrics
@@ -19,6 +20,7 @@ from src.evaluation.metrics import BASE_METRIC_NAMES, regression_metrics
 
 DEFAULT_PREDICTION_INTERVALS = (("06:00", "10:00"), ("10:00", "14:00"), ("14:00", "18:00"))
 LINE_COLORS = ("#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2")
+CHINESE_FONT_CANDIDATES = ("Microsoft YaHei", "Noto Sans SC", "SimHei", "SimSun")
 
 
 def write_training_loss_png(
@@ -46,7 +48,15 @@ def write_training_loss_png(
     early_stop_epoch = first_marked_epoch(epoch_history, "early_stop")
     if early_stop_epoch is not None:
         markers.append({"x": early_stop_epoch, "label": "early stop", "color": "#dc2626", "linestyle": ":"})
-    write_line_png(series, path, title="Training Loss", notes=[], markers=markers)
+    write_line_png(
+        series,
+        path,
+        title="模型训练损失变化曲线",
+        notes=[],
+        markers=markers,
+        x_label="迭代次数",
+        y_label="损失值",
+    )
 
 
 def write_comparison_loss_png(histories: list[dict], path: Path) -> None:
@@ -231,10 +241,13 @@ def write_line_png(
     title: str,
     notes: list[str],
     markers: list[dict] | None = None,
+    x_label: str = "Time",
+    y_label: str = "AC Power / kW",
 ) -> None:
     """通用折线 PNG。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(8.0, 3.8), dpi=140)
+    text_kwargs = text_font_kwargs(title, x_label, y_label, *notes)
     has_points = False
     for item in series:
         points = item.get("points", [])
@@ -268,10 +281,10 @@ def write_line_png(
             )
         ax.plot(x_values, y_values, label=str(item.get("label", "series")), color=item.get("color"), linewidth=1.8)
 
-    ax.set_title(title)
+    ax.set_title(title, **text_kwargs)
     if has_points:
-        ax.set_xlabel("Time")
-        ax.set_ylabel("AC Power / kW")
+        ax.set_xlabel(x_label, **text_kwargs)
+        ax.set_ylabel(y_label, **text_kwargs)
         ax.grid(True, alpha=0.25)
         for marker in markers or []:
             ax.axvline(
@@ -292,7 +305,16 @@ def write_line_png(
         ax.set_axis_off()
 
     for index, note in enumerate(notes):
-        ax.text(0.99, 0.96 - index * 0.06, note, ha="right", va="top", transform=ax.transAxes, fontsize=8)
+        ax.text(
+            0.99,
+            0.96 - index * 0.06,
+            note,
+            ha="right",
+            va="top",
+            transform=ax.transAxes,
+            fontsize=8,
+            **text_kwargs,
+        )
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
@@ -303,6 +325,21 @@ def first_marked_epoch(epoch_history: list[dict[str, float]], marker_name: str) 
         if marker_name in item:
             return float(item["epoch"])
     return None
+
+
+def text_font_kwargs(*texts: object) -> dict[str, str]:
+    """Return a CJK-capable font only when the requested text needs one."""
+    if not any(contains_cjk(text) for text in texts):
+        return {}
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    for font_name in CHINESE_FONT_CANDIDATES:
+        if font_name in available:
+            return {"fontfamily": font_name}
+    return {}
+
+
+def contains_cjk(text: object) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(text))
 
 
 def _time_to_minutes(value: str) -> int:

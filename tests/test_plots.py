@@ -12,11 +12,13 @@ def test_default_prediction_intervals_cover_6_to_18_daytime_windows():
 def test_training_loss_plot_does_not_overlay_metric_notes(monkeypatch):
     captured = {}
 
-    def fake_write_line_png(series, path, title, notes, markers=None):
+    def fake_write_line_png(series, path, title, notes, markers=None, x_label=None, y_label=None):
         captured["series"] = series
         captured["path"] = path
         captured["title"] = title
         captured["notes"] = notes
+        captured["x_label"] = x_label
+        captured["y_label"] = y_label
 
     monkeypatch.setattr(plots, "write_line_png", fake_write_line_png)
 
@@ -26,14 +28,16 @@ def test_training_loss_plot_does_not_overlay_metric_notes(monkeypatch):
         Path("loss_curve.png"),
     )
 
-    assert captured["title"] == "Training Loss"
+    assert captured["title"] == "模型训练损失变化曲线"
     assert captured["notes"] == []
+    assert captured["x_label"] == "迭代次数"
+    assert captured["y_label"] == "损失值"
 
 
 def test_training_loss_plot_includes_validation_loss_and_epoch_markers(monkeypatch):
     captured = {}
 
-    def fake_write_line_png(series, path, title, notes, markers=None):
+    def fake_write_line_png(series, path, title, notes, markers=None, x_label=None, y_label=None):
         captured["series"] = series
         captured["markers"] = markers
 
